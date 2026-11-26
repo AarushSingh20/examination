@@ -197,16 +197,27 @@ def exams():
 @roles_required('admin')
 def create_exam():
     d = payload()
-    if not required(d, 'title', 'course_id', 'examiner_id'):
-        return fail('Title, course and examiner required')
-    c = db.session.get(Course, positive_int(d['course_id']))
-    examiner = db.session.get(User, positive_int(d['examiner_id']))
+    if not required(d, 'title', 'course_id'):
+        return fail('Title and course required')
+    course = db.session.get(Course, positive_int(d['course_id']))
     duration = positive_int(d.get('duration_minutes', 60))
     marks = positive_int(d.get('total_marks', 100))
-    if not c or not examiner or examiner.role != 'examiner' or not duration or not marks:
-        return fail('Invalid course, examiner, duration or marks')
-    e = Exam(title=str(d['title']).strip(), course_id=c.id, examiner_id=examiner.id,
-             duration_minutes=duration, total_marks=marks)
+    if not course or not duration or not marks:
+        return fail('Invalid course, duration or marks')
+
+    examiner_id = None
+    requested_id = d.get('examiner_id')
+    if requested_id not in (None, ''):
+        raw_id = str(requested_id)
+        if len(raw_id) > 10 or not raw_id.isascii() or not raw_id.isdecimal():
+            return fail('Invalid examiner')
+        examiner = db.session.get(User, int(raw_id))
+        if examiner is None or examiner.role != 'examiner':
+            return fail('Invalid examiner')
+        examiner_id = examiner.id
+
+    e = Exam(title=str(d['title']).strip(), course_id=course.id,
+             examiner_id=examiner_id, duration_minutes=duration, total_marks=marks)
     db.session.add(e)
     db.session.commit()
     return jsonify(e.to_dict()), 201
@@ -220,6 +231,8 @@ def change_status(exam_id):
     status = payload().get('status')
     if status not in ('draft', 'published', 'closed'):
         return fail('Invalid status')
+    if status == 'published' and e.examiner_id is None:
+        return fail('Assign an examiner before publishing')
     if status == 'published' and not Question.query.filter_by(exam_id=e.id).first():
         return fail('Add at least one question before publishing')
     e.status = status
@@ -266,6 +279,8 @@ def create_slot():
     capacity = positive_int(d.get('capacity'))
     if not e or not starts or starts <= utcnow() or not capacity:
         return fail('Valid exam, future start (with timezone), capacity required')
+    if e.examiner_id is None:
+        return fail('Assign an examiner before scheduling a slot')
     # If examiner has published availability, slot must fit one of their windows.
     windows = Availability.query.filter_by(examiner_id=e.examiner_id).all()
     from datetime import timedelta

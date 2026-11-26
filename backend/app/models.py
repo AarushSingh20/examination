@@ -47,7 +47,7 @@ class Exam(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(180), nullable=False)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
-    examiner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    examiner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     duration_minutes = db.Column(db.Integer, nullable=False, default=60)
     total_marks = db.Column(db.Integer, nullable=False, default=100)
     status = db.Column(db.String(20), nullable=False, default='draft')
@@ -58,7 +58,7 @@ class Exam(db.Model):
     def to_dict(self):
         return {'id': self.id, 'title': self.title, 'course_id': self.course_id,
                 'course': self.course.title, 'examiner_id': self.examiner_id,
-                'examiner': self.examiner.name, 'duration_minutes': self.duration_minutes,
+                'examiner': self.examiner.name if self.examiner else None, 'duration_minutes': self.duration_minutes,
                 'total_marks': self.total_marks, 'status': self.status}
 
 class Availability(db.Model):
@@ -126,8 +126,3 @@ class Submission(db.Model):
     max_score = db.Column(db.Integer, nullable=False)
     submitted_at = db.Column(db.DateTime, default=utcnow)
     booking = db.relationship('Booking')
-
-    def to_dict(self):
-        return {'id': self.id, 'booking_id': self.booking_id, 'exam': self.booking.slot.exam.title,
-                'score': self.score, 'max_score': self.max_score,
-                'submitted_at': self.submitted_at.isoformat()+'Z'}
