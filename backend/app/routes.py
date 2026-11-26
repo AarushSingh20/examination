@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token
 from sqlalchemy import func
 from .extensions import db
-from .models import User, Course, Enrollment, Exam, Availability, ExamSlot, Booking, Question, Submission, utcnow
+from .models import User, Course, Enrollment, Exam, ExamInvitation, Availability, ExamSlot, Booking, Question, Submission, utcnow
 from .authz import roles_required, current_user
 
 api = Blueprint('routes', __name__)
@@ -36,7 +36,7 @@ def iso_utc(value):
             raise ValueError('Timezone required')
         from datetime import timezone
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError, OverflowError):
         return None
 
 @api.post('/auth/register')
@@ -410,3 +410,86 @@ def results():
     elif u.role == 'examiner':
         q = q.filter(Exam.examiner_id == u.id)
     return jsonify([s.to_dict() for s in q.order_by(Submission.id.desc()).all()])
+
+
+def examiner_has_conflict(examiner_id, start, end):
+    accepted = ExamInvitation.query.filter(
+        ExamInvitation.examiner_id == examiner_id,
+        ExamInvitation.status == 'ACCEPTED',
+        ExamInvitation.starts_at < end,
+        ExamInvitation.ends_at > start,
+    ).first()
+    if accepted is not None:
+        return True
+
+    # Slots made by the original scheduling workflow have no invitation.
+    slots = db.session.query(ExamSlot.starts_at, Exam.duration_minutes).join(
+        Exam, Exam.id == ExamSlot.exam_id
+    ).filter(Exam.examiner_id == examiner_id, ExamSlot.starts_at < end)
+    return any(start - slot_start < timedelta(minutes=minutes) for slot_start, minutes in slots)
+
+
+@api.post('/exams/<int:exam_id>/invitations')
+@roles_required('admin')
+def send_invitation(exam_id):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return fail('Provide an examiner_id and starts_at in a JSON object')
+
+    raw_id = str(data.get('examiner_id', ''))
+    if not (0 < len(raw_id) <= 10 and raw_id.isascii() and raw_id.isdecimal()):
+        return fail('Select a valid examiner')
+    examiner_id = int(raw_id)
+    if not 1 <= examiner_id <= 2147483647:
+        return fail('Select a valid examiner')
+
+    exam = Exam.query.filter_by(id=exam_id).with_for_update().first()
+    if exam is None:
+        return fail('Exam not found', 404)
+    if exam.status != 'draft' or exam.examiner_id is not None:
+        return fail('Invitations require an unassigned draft exam', 409)
+
+    examiner = db.session.get(User, examiner_id)
+    if examiner is None or examiner.role != 'examiner':
+        return fail('Select a valid examiner')
+
+    now = utcnow()
+    start = iso_utc(data.get('starts_at'))
+    if start is None or start <= now:
+        return fail('Choose a future start time with a timezone')
+    try:
+        end = start + timedelta(minutes=exam.duration_minutes)
+    except OverflowError:
+        return fail('Exam end time is out of range')
+
+    window = Availability.query.filter(
+        Availability.examiner_id == examiner_id,
+        Availability.starts_at <= start,
+        Availability.ends_at >= end,
+    ).first()
+    if window is None:
+        return fail('Examiner availability must cover the full exam', 409)
+    if examiner_has_conflict(examiner_id, start, end):
+        return fail('Examiner already has an overlapping assignment', 409)
+
+    pending = ExamInvitation.query.filter_by(
+        exam_id=exam.id, examiner_id=examiner_id, status='PENDING'
+    ).first()
+    if pending is not None:
+        if pending.expires_at > now:
+            return fail('A pending invitation already exists for this examiner and exam', 409)
+        pending.status = 'EXPIRED'
+        db.session.flush()
+
+    invitation = ExamInvitation(
+        exam_id=exam.id, examiner_id=examiner_id, invited_by=current_user().id,
+        starts_at=start, ends_at=end, expires_at=start, status='PENDING',
+    )
+    db.session.add(invitation)
+    db.session.commit()
+    return jsonify(
+        id=invitation.id, exam_id=invitation.exam_id, examiner_id=invitation.examiner_id,
+        status=invitation.status, starts_at=invitation.starts_at.isoformat() + 'Z',
+        ends_at=invitation.ends_at.isoformat() + 'Z',
+        expires_at=invitation.expires_at.isoformat() + 'Z',
+    ), 201
