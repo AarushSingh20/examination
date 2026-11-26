@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token
 from sqlalchemy import func
 from .extensions import db
-from .models import User, Course, Enrollment, Exam, ExamInvitation, Availability, ExamSlot, Booking, Question, Submission, utcnow
+from .models import User, Course, Enrollment, Exam, ExamInvitation, Notification, Availability, ExamSlot, Booking, Question, Submission, utcnow
 from .authz import roles_required, current_user
 
 api = Blueprint('routes', __name__)
@@ -493,6 +493,12 @@ def send_invitation(exam_id):
         starts_at=start, ends_at=end, expires_at=start, status='PENDING',
     )
     db.session.add(invitation)
+    db.session.flush()  # The new invitation ID is needed by its notification.
+    db.session.add(Notification(
+        recipient_id=examiner_id, invitation_id=invitation.id,
+        kind='INVITATION_RECEIVED', title='New exam invitation',
+        body=f'You have been invited to examine {exam.title}. Open Invitations to respond.',
+    ))
     db.session.commit()
     return jsonify(
         id=invitation.id, exam_id=invitation.exam_id, examiner_id=invitation.examiner_id,
@@ -580,5 +586,45 @@ def respond_to_invitation(invitation_id):
 
     invite.status = decision
     invite.responded_at = now
+    db.session.add(Notification(
+        recipient_id=invite.invited_by, invitation_id=invite.id,
+        kind='INVITATION_' + decision, title='Examiner response',
+        body=f'{current_user().name} {decision.lower()} the invitation for {exam.title}.',
+    ))
     db.session.commit()
     return jsonify(id=invite.id, status=invite.status)
+
+
+@api.get('/notifications')
+@roles_required('admin', 'examiner')
+def list_notifications():
+    inbox = Notification.query.filter_by(recipient_id=current_user().id)
+    page = inbox
+    before_id = request.args.get('before_id')
+    if before_id is not None:
+        cursor = request.args.get('before_id', type=int)
+        if cursor is None or not 1 <= cursor <= 2147483647:
+            return fail('Invalid notification cursor')
+        page = page.filter(Notification.id < cursor)
+
+    page_size = 30
+    rows = page.order_by(Notification.id.desc()).limit(page_size + 1).all()
+    return jsonify(
+        items=[row.to_dict() for row in rows[:page_size]],
+        unread_count=inbox.filter_by(is_read=False).count(),
+        next_before_id=rows[page_size - 1].id if len(rows) > page_size else None,
+    )
+
+
+@api.patch('/notifications/<int:notification_id>/read')
+@roles_required('admin', 'examiner')
+def read_notification(notification_id):
+    note = Notification.query.filter_by(
+        id=notification_id, recipient_id=current_user().id
+    ).first()
+    if note is None:
+        return fail('Notification not found', 404)
+    if not note.is_read:
+        note.is_read = True
+        db.session.commit()
+    return jsonify(note.to_dict())

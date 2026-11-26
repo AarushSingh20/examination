@@ -24,13 +24,70 @@ function Auth({ onLogin, busy, setBusy }) {
     return <div className="auth-page"><div className="auth-feature"><div className="auth-brand"><Brand /></div><div className="auth-feature-content"><span className="pill">EDUCATION, REIMAGINED</span><h1>Smarter exams.<br /><em>Brighter futures.</em></h1><p>Plan assessments, manage schedules, track outcomes, and empower every learner—all from one beautiful workspace.</p><div className="auth-decor"><div><ChartNoAxesColumnIncreasing size={25} /> <span>Performance at a glance</span></div><div><ShieldCheck size={25} /> <span>Role-based security</span></div></div></div><div className="auth-feature-foot">Built for modern institutions · 2026</div></div><div className="auth-form-side"><div className="auth-form"><span className="auth-kicker">WELCOME TO EXAMINATION</span><h2>{register ? 'Create your account' : 'Welcome back'}</h2><p className="muted">{register ? 'Sign up as a student to get started.' : 'Sign in to access your personalized dashboard.'}</p><form onSubmit={submit}>{register && <label>Full name<div className="input-icon"><UserRound size={18} /><input name="name" placeholder="Your full name" value={form.name} onChange={update} required /></div></label>}<label>Email address<div className="input-icon"><Mail size={18} /><input type="email" name="email" placeholder="you@university.edu" value={form.email} onChange={update} required /></div></label><label>Password<div className="input-icon"><LockKeyhole size={18} /><input type="password" name="password" placeholder="At least 8 characters" value={form.password} onChange={update} minLength={register ? 8 : 1} required /></div></label>{error && <div className="alert error"><AlertCircle size={16} />{error}</div>}<button className="btn primary wide" disabled={busy}>{busy ? 'Please wait...' : register ? 'Create student account' : 'Sign in to dashboard'}<ArrowRight size={17} /></button></form><div className="auth-switch">{register ? 'Already have an account?' : 'New student?'} <button className="text-button" onClick={() => { setRegister(!register); setError('') }}>{register ? 'Sign in' : 'Create an account'}</button></div><p className="auth-hint">Admin and examiner accounts are created by the administrator.</p></div></div></div>;
 }
 
+function NotificationBell({ go }) {
+    const [open, setOpen] = useState(false);
+    const [count, setCount] = useState(0);
+    const [page, setPage] = useState({ items: [], next_before_id: null });
+    const [cursor, setCursor] = useState(null);
+    const [version, setVersion] = useState(0);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [marking, setMarking] = useState(null);
+    useEffect(() => {
+        let active = true;
+        let timer;
+        async function load() {
+            try {
+                const { data } = await api.get('/notifications', { params: cursor ? { before_id: cursor } : {} });
+                if (active) { setPage(data); setCount(data.unread_count); setError(''); }
+            } catch (err) {
+                if (active) setError(errorMessage(err));
+            } finally {
+                if (active) { setLoading(false); timer = setTimeout(load, 30000); }
+            }
+        }
+        setLoading(true);
+        load();
+        return () => { active = false; clearTimeout(timer); };
+    }, [cursor, open, version]);
+    async function mark(id) {
+        setMarking(id);
+        try {
+            await api.patch(`/notifications/${id}/read`);
+            setVersion(v => v + 1);
+        } catch (err) { setError(errorMessage(err)); }
+        finally { setMarking(null); }
+    }
+    return <div style={{ position: 'relative' }}>
+        <button className="btn secondary small" aria-label={`Notifications, ${count} unread`}
+            aria-expanded={open} onClick={() => { setCursor(null); setOpen(!open); }}>
+            <Bell size={18} />{count > 0 && <strong>{count}</strong>}
+        </button>
+        {open && <section aria-label="Notifications" className="panel"
+            style={{ position: 'fixed', top: '4.5rem', right: '1rem', width: 'min(25rem, calc(100vw - 2rem))', maxHeight: '70vh', overflowY: 'auto', zIndex: 50, background: 'white' }}>
+            <div className="panel-head"><h3>Notifications</h3><Button secondary onClick={() => setOpen(false)}>Close</Button></div>
+            <Notice message={error} />
+            {loading ? <p>Loading…</p> : !error && !page.items.length && <p>No notifications yet.</p>}
+            {!loading && page.items.map(note => <article key={note.id} style={{ padding: '0.75rem 0', borderBottom: '1px solid #ddd' }}>
+                <strong>{note.title}</strong><p>{note.body}</p><small>{date(note.created_at)}</small>
+                {!note.is_read && <div><Button disabled={marking !== null} onClick={() => mark(note.id)}>Mark as read</Button></div>}
+            </article>)}
+            <div className="inline-actions">
+                {cursor && <Button secondary onClick={() => setCursor(null)}>Newest</Button>}
+                {!loading && page.next_before_id && <Button secondary onClick={() => setCursor(page.next_before_id)}>Older</Button>}
+                <Button onClick={() => { setOpen(false); go('Invitations'); }}>Open invitations</Button>
+            </div>
+        </section>}
+    </div>;
+}
+
 function Workspace({ user, logout }) {
     const [section, setSection] = useState('Overview'), [drawer, setDrawer] = useState(false), [refresh, setRefresh] = useState(0);
     const update = () => setRefresh(n => n + 1);
     const navigate = useNavigate();
     const sections = menus[user.role] || menus.student;
     const go = s => { setSection(s); setDrawer(false) };
-    return <div className="app-shell"><aside className={`sidebar ${drawer ? 'open' : ''}`}><Brand /><div className="workspace-label">WORKSPACE</div><nav>{sections.map(s => { const I = icons[s]; return <button key={s} onClick={() => go(s)} className={`nav-link ${s === section ? 'active' : ''}`}><I size={19} /><span>{s}</span>{s === section && <span className="active-indicator" />}</button> })}</nav><div className="sidebar-bottom"><div className="support-card"><span className="support-icon"><GraduationCap size={20} /></span><strong>One portal. Every exam.</strong><small>Better assessment management starts here.</small></div><button className="nav-link" onClick={logout}><LogOut size={19} /> Sign out</button></div></aside><main className="main"><header className="topbar"><div className="top-left"><button className="icon-btn mobile-menu" aria-label="Open menu" onClick={() => setDrawer(!drawer)}><Menu size={21} /></button><div className="breadcrumb">Workspace <ChevronRight size={15} /> <strong>{section}</strong></div></div><div className="top-actions"><span className="role-label">{user.role} workspace</span><span className="avatar">{user.name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()}</span><div className="account-name"><strong>{user.name}</strong><small>{user.email}</small></div></div></header><div className="content"><div className="page-heading"><div><p className="eyebrow">{user.role.toUpperCase()} / {section.toUpperCase()}</p><h1>{section === 'Overview' ? `Good to see you, ${user.name.split(' ')[0]} 👋` : section}</h1><p className="muted">{section === 'Overview' ? `Here's what's happening across your ${user.role} workspace.` : 'Manage your examination workflow in one place.'}</p></div><div className="date-chip"><CalendarDays size={17} />{new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</div></div><Section key={`${user.role}-${section}`} section={section} user={user} refresh={refresh} update={update} navigateTo={go} /></div></main>{drawer && <div className="backdrop" onClick={() => setDrawer(false)} />}</div>;
+    return <div className="app-shell"><aside className={`sidebar ${drawer ? 'open' : ''}`}><Brand /><div className="workspace-label">WORKSPACE</div><nav>{sections.map(s => { const I = icons[s]; return <button key={s} onClick={() => go(s)} className={`nav-link ${s === section ? 'active' : ''}`}><I size={19} /><span>{s}</span>{s === section && <span className="active-indicator" />}</button> })}</nav><div className="sidebar-bottom"><div className="support-card"><span className="support-icon"><GraduationCap size={20} /></span><strong>One portal. Every exam.</strong><small>Better assessment management starts here.</small></div><button className="nav-link" onClick={logout}><LogOut size={19} /> Sign out</button></div></aside><main className="main"><header className="topbar"><div className="top-left"><button className="icon-btn mobile-menu" aria-label="Open menu" onClick={() => setDrawer(!drawer)}><Menu size={21} /></button><div className="breadcrumb">Workspace <ChevronRight size={15} /> <strong>{section}</strong></div></div><div className="top-actions">{(user.role === 'admin' || user.role === 'examiner') && <NotificationBell key={user.id} go={go} />}<span className="role-label">{user.role} workspace</span><span className="avatar">{user.name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()}</span><div className="account-name"><strong>{user.name}</strong><small>{user.email}</small></div></div></header><div className="content"><div className="page-heading"><div><p className="eyebrow">{user.role.toUpperCase()} / {section.toUpperCase()}</p><h1>{section === 'Overview' ? `Good to see you, ${user.name.split(' ')[0]} 👋` : section}</h1><p className="muted">{section === 'Overview' ? `Here's what's happening across your ${user.role} workspace.` : 'Manage your examination workflow in one place.'}</p></div><div className="date-chip"><CalendarDays size={17} />{new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</div></div><Section key={`${user.role}-${section}`} section={section} user={user} refresh={refresh} update={update} navigateTo={go} /></div></main>{drawer && <div className="backdrop" onClick={() => setDrawer(false)} />}</div>;
 }
 
 function useLoad(url, refresh = 0) { const [data, setData] = useState([]), [loading, setLoading] = useState(true), [error, setError] = useState(''); useEffect(() => { let live = true; setLoading(true); api.get(url).then(r => { if (live) { setData(r.data); setError('') } }).catch(e => { if (live) setError(errorMessage(e)) }).finally(() => { if (live) setLoading(false) }); return () => { live = false } }, [url, refresh]); return { data, loading, error } }

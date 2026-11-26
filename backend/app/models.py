@@ -166,3 +166,34 @@ class ExamInvitation(db.Model):
             sqlite_where=db.text("status = 'ACCEPTED'"),
         ),
     )
+
+
+class Notification(db.Model):
+    __tablename__ = 'notifications'
+
+    id = db.Column(db.Integer, primary_key=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    kind = db.Column(db.String(48), nullable=False)
+    invitation_id = db.Column(db.Integer, db.ForeignKey('exam_invitations.id'))
+    title = db.Column(db.String(200), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        db.Index('ix_notifications_recipient_created', 'recipient_id', 'created_at'),
+        db.UniqueConstraint(
+            'recipient_id', 'invitation_id', 'kind', name='uq_notification_invite_event'
+        ),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'kind': self.kind,
+            'invitation_id': self.invitation_id,
+            'title': self.title,
+            'body': self.body,
+            'is_read': self.is_read,
+            'created_at': self.created_at.isoformat() + 'Z',
+        }
