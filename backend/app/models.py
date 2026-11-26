@@ -126,3 +126,43 @@ class Submission(db.Model):
     max_score = db.Column(db.Integer, nullable=False)
     submitted_at = db.Column(db.DateTime, default=utcnow)
     booking = db.relationship('Booking')
+
+    def to_dict(self):
+        return {'id': self.id, 'booking_id': self.booking_id, 'exam': self.booking.slot.exam.title,
+                'score': self.score, 'max_score': self.max_score,
+                'submitted_at': self.submitted_at.isoformat()+'Z'}
+
+
+class ExamInvitation(db.Model):
+    """A request to staff an exam during a proposed UTC time window."""
+
+    __tablename__ = 'exam_invitations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('exams.id'), nullable=False)
+    examiner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    invited_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    starts_at = db.Column(db.DateTime, nullable=False)
+    ends_at = db.Column(db.DateTime, nullable=False)
+    status = db.Column(db.String(16), nullable=False, default='PENDING')
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    responded_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        db.CheckConstraint('ends_at > starts_at', name='ck_exam_invitation_window'),
+        db.CheckConstraint(
+            "status IN ('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'CANCELLED')",
+            name='ck_exam_invitation_status',
+        ),
+        db.Index(
+            'uq_exam_invitation_pending', 'exam_id', 'examiner_id', unique=True,
+            postgresql_where=db.text("status = 'PENDING'"),
+            sqlite_where=db.text("status = 'PENDING'"),
+        ),
+        db.Index(
+            'uq_exam_invitation_accepted', 'exam_id', unique=True,
+            postgresql_where=db.text("status = 'ACCEPTED'"),
+            sqlite_where=db.text("status = 'ACCEPTED'"),
+        ),
+    )
