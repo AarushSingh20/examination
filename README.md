@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # examination — Examination Management Portal
 
 A modern, responsive college-project examination portal with **Flask REST API + React/Vite + PostgreSQL**, role-based JWT authentication, course enrollment, examiner availability, exam scheduling, slot booking, online MCQ assessment, automatic grading, and dashboards for administrators, examiners, and students.
@@ -129,3 +130,7 @@ Generate migrations in a development environment, review scripts, and commit the
 - Slot capacity is protected by PostgreSQL row locks for concurrent bookings. Concurrent **different** slots for the same exam need an additional exam-level/unique-constraint guard if your deployment requires strict exactly-one-booking-per-exam invariants under heavy traffic.
 - This version is an MVP suitable for local demonstration. Before production: HTTPS, secure cookie authentication in place of sessionStorage tokens, stricter validation, request rate limiting, audit logs, exam question randomization, accessibility testing, full migration review, and stronger attempt/availability synchronization are recommended.
 - Exams unlock at their slot start. There is no remote proctoring, essay grading, payments or certificate issuance.
+=======
+# examination
+AI-Powered Examination Management Portal built with Flask, React and Supabase PostgreSQL
+>>>>>>> e57e8d5d916442bb19c6d34833f8e9e52867cf4b
