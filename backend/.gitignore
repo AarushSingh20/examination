@@ -1,0 +1,36 @@
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# React / Node dependencies
+node_modules/
+dist/
+.vite/
+
+# IDE files
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Local database files
+*.db
+*.sqlite3
+
+# Local SSL certificates and private keys
+supabase-ca.crt
+*.key
+*.pem
