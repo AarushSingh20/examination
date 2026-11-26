@@ -281,9 +281,12 @@ def create_slot():
         return fail('Valid exam, future start (with timezone), capacity required')
     if e.examiner_id is None:
         return fail('Assign an examiner before scheduling a slot')
+    User.query.filter_by(id=e.examiner_id).with_for_update().one()
+    if examiner_has_conflict(e.examiner_id, starts, starts + timedelta(minutes=e.duration_minutes),
+                             except_exam=e.id):
+        return fail('Examiner already has an overlapping assignment', 409)
     # If examiner has published availability, slot must fit one of their windows.
     windows = Availability.query.filter_by(examiner_id=e.examiner_id).all()
-    from datetime import timedelta
     if windows and not any(a.starts_at <= starts and starts + timedelta(minutes=e.duration_minutes) <= a.ends_at for a in windows):
         return fail('Slot must fit examiner availability')
     s = ExamSlot(exam_id=e.id, starts_at=starts, capacity=capacity)
@@ -412,20 +415,24 @@ def results():
     return jsonify([s.to_dict() for s in q.order_by(Submission.id.desc()).all()])
 
 
-def examiner_has_conflict(examiner_id, start, end):
+def examiner_has_conflict(examiner_id, start, end, *, except_exam=None):
     accepted = ExamInvitation.query.filter(
         ExamInvitation.examiner_id == examiner_id,
         ExamInvitation.status == 'ACCEPTED',
         ExamInvitation.starts_at < end,
         ExamInvitation.ends_at > start,
-    ).first()
-    if accepted is not None:
+    )
+    if except_exam is not None:
+        accepted = accepted.filter(ExamInvitation.exam_id != except_exam)
+    if accepted.first() is not None:
         return True
 
     # Slots made by the original scheduling workflow have no invitation.
     slots = db.session.query(ExamSlot.starts_at, Exam.duration_minutes).join(
         Exam, Exam.id == ExamSlot.exam_id
     ).filter(Exam.examiner_id == examiner_id, ExamSlot.starts_at < end)
+    if except_exam is not None:
+        slots = slots.filter(Exam.id != except_exam)
     return any(start - slot_start < timedelta(minutes=minutes) for slot_start, minutes in slots)
 
 
@@ -493,3 +500,85 @@ def send_invitation(exam_id):
         ends_at=invitation.ends_at.isoformat() + 'Z',
         expires_at=invitation.expires_at.isoformat() + 'Z',
     ), 201
+
+
+@api.get('/invitations')
+@roles_required('examiner', 'admin')
+def list_invitations():
+    user = current_user()
+    query = db.session.query(ExamInvitation, Exam.title, User.name).join(
+        Exam, Exam.id == ExamInvitation.exam_id
+    ).join(User, User.id == ExamInvitation.examiner_id)
+    if user.role == 'examiner':
+        query = query.filter(ExamInvitation.examiner_id == user.id)
+    now = utcnow()
+    result = []
+    for invite, title, examiner in query.order_by(ExamInvitation.id.desc()):
+        status = invite.status
+        if status == 'PENDING' and invite.expires_at <= now:
+            status = 'EXPIRED'
+        result.append({
+            'id': invite.id, 'exam_id': invite.exam_id, 'exam': title,
+            'examiner_id': invite.examiner_id, 'examiner': examiner, 'status': status,
+            'starts_at': invite.starts_at.isoformat() + 'Z',
+            'ends_at': invite.ends_at.isoformat() + 'Z',
+            'expires_at': invite.expires_at.isoformat() + 'Z',
+            'responded_at': invite.responded_at.isoformat() + 'Z' if invite.responded_at else None,
+        })
+    return jsonify(result)
+
+
+@api.post('/invitations/<int:invitation_id>/response')
+@roles_required('examiner')
+def respond_to_invitation(invitation_id):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or data.get('decision') not in ('accept', 'decline'):
+        return fail('Choose accept or decline')
+
+    examiner_id = current_user().id
+    owned = ExamInvitation.query.filter_by(id=invitation_id, examiner_id=examiner_id)
+    target = owned.with_entities(ExamInvitation.exam_id).first()
+    if target is None:
+        return fail('Invitation not found', 404)
+
+    # Exam lock serializes competing responses; examiner lock serializes bookings
+    # across different exams. Read the invitation state after acquiring both.
+    exam = Exam.query.filter_by(id=target.exam_id).with_for_update().one()
+    User.query.filter_by(id=examiner_id).with_for_update().one()
+    invite = owned.populate_existing().with_for_update().one()
+    decision = 'ACCEPTED' if data['decision'] == 'accept' else 'DECLINED'
+    if invite.status == decision:
+        return jsonify(id=invite.id, status=invite.status)
+    if invite.status != 'PENDING':
+        return fail('Invitation is already ' + invite.status.lower(), 409)
+
+    now = utcnow()
+    if invite.expires_at <= now:
+        invite.status = 'EXPIRED'
+        db.session.commit()
+        return fail('Invitation has expired', 409)
+
+    if decision == 'ACCEPTED':
+        if exam.status != 'draft' or exam.examiner_id is not None:
+            return fail('Exam is no longer an unassigned draft', 409)
+        window = Availability.query.filter(
+            Availability.examiner_id == examiner_id,
+            Availability.starts_at <= invite.starts_at,
+            Availability.ends_at >= invite.ends_at,
+        ).first()
+        if window is None:
+            return fail('Your availability no longer covers the exam', 409)
+        if examiner_has_conflict(examiner_id, invite.starts_at, invite.ends_at):
+            return fail('You already have an overlapping assignment', 409)
+        exam.examiner_id = examiner_id
+        others = ExamInvitation.query.filter(
+            ExamInvitation.exam_id == exam.id, ExamInvitation.id != invite.id,
+            ExamInvitation.status == 'PENDING',
+        )
+        others.filter(ExamInvitation.expires_at <= now).update({'status': 'EXPIRED'})
+        others.filter(ExamInvitation.expires_at > now).update({'status': 'CANCELLED'})
+
+    invite.status = decision
+    invite.responded_at = now
+    db.session.commit()
+    return jsonify(id=invite.id, status=invite.status)

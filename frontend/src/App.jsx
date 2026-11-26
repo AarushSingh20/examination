@@ -3,8 +3,8 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-
 import { LayoutDashboard, BookOpen, CalendarDays, Users, GraduationCap, ClipboardList, LogOut, Plus, Check, Clock, ChartNoAxesColumnIncreasing, Menu, Search, Bell, ChevronRight, FileQuestion, ShieldCheck, ArrowRight, LockKeyhole, Mail, UserRound, ClipboardCheck, CalendarCheck2, AlertCircle } from 'lucide-react';
 import { api, errorMessage } from './api';
 
-const icons = { Overview: LayoutDashboard, Courses: BookOpen, Exams: ClipboardList, People: Users, Slots: CalendarDays, Availability: CalendarCheck2, Bookings: CalendarDays, Questions: FileQuestion, Results: ChartNoAxesColumnIncreasing, 'My Courses': GraduationCap };
-const menus = { admin: ['Overview', 'Courses', 'Exams', 'People', 'Slots', 'Bookings', 'Results'], examiner: ['Overview', 'Exams', 'Availability', 'Questions', 'Bookings', 'Results'], student: ['Overview', 'My Courses', 'Exams', 'Slots', 'Bookings', 'Results'] };
+const icons = { Invitations: Mail, Overview: LayoutDashboard, Courses: BookOpen, Exams: ClipboardList, People: Users, Slots: CalendarDays, Availability: CalendarCheck2, Bookings: CalendarDays, Questions: FileQuestion, Results: ChartNoAxesColumnIncreasing, 'My Courses': GraduationCap };
+const menus = { admin: ['Overview', 'Courses', 'Exams', 'Invitations', 'People', 'Slots', 'Bookings', 'Results'], examiner: ['Overview', 'Exams', 'Invitations', 'Availability', 'Questions', 'Bookings', 'Results'], student: ['Overview', 'My Courses', 'Exams', 'Slots', 'Bookings', 'Results'] };
 const colors = ['purple', 'blue', 'orange', 'green', 'pink'];
 
 function App() {
@@ -41,10 +41,70 @@ function Table({ headers, rows, empty = 'Nothing here yet' }) { return <div clas
 function Chip({ children, tone = 'gray' }) { return <span className={`chip ${tone}`}>{children}</span> }
 function date(s) { return s ? new Date(s).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—' }
 function Button({ children, onClick, secondary = false, disabled = false }) { return <button disabled={disabled} className={`btn ${secondary ? 'secondary' : 'primary'} small`} onClick={onClick}>{children}</button> }
-function Section({ section, user, refresh, update, navigateTo }) { switch (section) { case 'Overview': return <Overview user={user} refresh={refresh} navigateTo={navigateTo} />; case 'Courses': case 'My Courses': return <Courses user={user} refresh={refresh} update={update} />; case 'People': return <People refresh={refresh} update={update} />; case 'Exams': return <Exams user={user} refresh={refresh} update={update} />; case 'Availability': return <Availability refresh={refresh} update={update} />; case 'Slots': return <Slots user={user} refresh={refresh} update={update} />; case 'Bookings': return <Bookings user={user} refresh={refresh} />; case 'Questions': return <Questions user={user} refresh={refresh} update={update} />; case 'Results': return <Results user={user} refresh={refresh} />; default: return null } }
+function Section({ section, user, refresh, update, navigateTo }) { switch (section) { case 'Invitations': return <Invitations user={user} refresh={refresh} update={update} />; case 'Overview': return <Overview user={user} refresh={refresh} navigateTo={navigateTo} />; case 'Courses': case 'My Courses': return <Courses user={user} refresh={refresh} update={update} />; case 'People': return <People refresh={refresh} update={update} />; case 'Exams': return <Exams user={user} refresh={refresh} update={update} />; case 'Availability': return <Availability refresh={refresh} update={update} />; case 'Slots': return <Slots user={user} refresh={refresh} update={update} />; case 'Bookings': return <Bookings user={user} refresh={refresh} />; case 'Questions': return <Questions user={user} refresh={refresh} update={update} />; case 'Results': return <Results user={user} refresh={refresh} />; default: return null } }
 function Overview({ user, refresh, navigateTo }) { const { data, loading, error } = useLoad('/dashboard', refresh); const stats = data.stats || {}; const statIcons = [Users, BookOpen, ClipboardList, CalendarDays, ChartNoAxesColumnIncreasing]; return <><Notice message={error} /><div className="stats-grid">{Object.entries(stats).map(([name, value], i) => { const I = statIcons[i % statIcons.length]; return <div className="stat-card" key={name}><div className={`stat-icon ${colors[i % colors.length]}`}><I size={22} /></div><span className="stat-label">{name}</span><div className="stat-number">{value}</div><div className="stat-foot">Live workspace data <span>↗</span></div></div> })}{loading && <p className="muted">Loading dashboard...</p>}</div><div className="overview-grid"><Panel title={user.role === 'student' ? 'Your upcoming bookings' : 'Recently managed exams'} sub="A quick look at your activity" action={<button className="text-button" onClick={() => navigateTo(user.role === 'student' ? 'Bookings' : 'Exams')}>View all <ArrowRight size={14} /></button>}>{user.role === 'student' ? <Table headers={['Exam', 'Scheduled for']} rows={(data.bookings || []).map(x => [x.exam, date(x.starts_at)])} /> : <Table headers={['Exam', 'Course', 'Status']} rows={(data.recent_exams || []).map(x => [x.title, x.course, <Chip tone={x.status === 'published' ? 'green' : 'orange'}>{x.status}</Chip>])} />}</Panel><Panel title="Quick actions" sub="Pick up where you left off"><div className="quick-actions">{(user.role === 'admin' ? [['Manage courses', 'Courses'], ['Schedule examinations', 'Exams'], ['Manage exam slots', 'Slots']] : user.role === 'examiner' ? [['View assigned exams', 'Exams'], ['Write exam questions', 'Questions'], ['Set availability', 'Availability']] : [['Find available exams', 'Exams'], ['Book a slot', 'Slots'], ['View results', 'Results']]).map(([name, target]) => <button key={name} onClick={() => navigateTo(target)}><span>{name}</span><ArrowRight size={17} /></button>)}</div></Panel></div></> }
 function Courses({ user, refresh, update }) { const { data, error } = useLoad('/courses', refresh); const mine = useLoad('/enrollments/me', refresh); const [message, setMessage] = useState(''); const enrolled = new Set((mine.data || []).map(x => x.id)); async function enroll(course) { try { await api.post('/enrollments', { course_id: course.id }); setMessage('Enrolled successfully'); update() } catch (e) { setMessage(errorMessage(e)) } } return <><Notice message={error} /><Notice message={message} type={message === 'Enrolled successfully' ? 'success' : 'error'} />{user.role === 'admin' && <Panel title="Create a course" sub="Add a new course to your catalog"><ActionForm fields={[{ name: 'code', label: 'Course code', placeholder: 'CS201' }, { name: 'title', label: 'Course title', placeholder: 'Data Structures' }, { name: 'description', label: 'Description', wide: true, required: false }]} onSave={d => api.post('/courses', d)} onDone={update} /></Panel>}<Panel title="Course catalog" sub={`${data.length} available courses`}><Table headers={['Code', 'Course name', 'Description', ...(user.role === 'student' ? ['Enrollment'] : [])]} rows={data.map(c => [<strong>{c.code}</strong>, c.title, c.description || '—', ...(user.role === 'student' ? [enrolled.has(c.id) ? <Chip tone="green">Enrolled</Chip> : <Button onClick={() => enroll(c)}>Enroll</Button>] : [])])} /></Panel></> }
 function People({ refresh, update }) { const { data, error } = useLoad('/users', refresh); return <><Notice message={error} /><Panel title="Add an examiner" sub="Examiner login credentials are created here"><ActionForm fields={[{ name: 'name', label: 'Full name', placeholder: 'Dr. Aditi Sharma' }, { name: 'email', label: 'Email', type: 'email', placeholder: 'faculty@university.edu' }, { name: 'password', label: 'Temporary password', type: 'password', wide: true, placeholder: 'At least 8 characters' }]} onSave={d => api.post('/users/examiners', d)} onDone={update} /></Panel><Panel title="Directory" sub={`${data.length} registered users`}><Table headers={['Name', 'Email', 'Role']} rows={data.map(u => [<strong>{u.name}</strong>, u.email, <Chip tone={u.role === 'admin' ? 'purple' : u.role === 'examiner' ? 'blue' : 'green'}>{u.role}</Chip>])} /></Panel></> }
+function Invitations({ user, refresh, update }) {
+    const { data, loading, error } = useLoad('/invitations', refresh);
+    const [busyId, setBusyId] = useState(null);
+    const [notice, setNotice] = useState(null);
+    const canRespond = user.role === 'examiner';
+
+    async function respond(invitation, decision) {
+        if (busyId !== null) return;
+        setBusyId(invitation.id);
+        setNotice(null);
+        try {
+            const { data: response } = await api.post(
+                `/invitations/${invitation.id}/response`, { decision }
+            );
+            const accepted = response.status === 'ACCEPTED';
+            setNotice({
+                type: 'success',
+                message: accepted
+                    ? `You accepted ${invitation.exam}. It is now in Exams.`
+                    : `You declined ${invitation.exam}.`,
+            });
+        } catch (err) {
+            setNotice({ type: 'error', message: errorMessage(err) });
+        } finally {
+            setBusyId(null);
+            update();
+        }
+    }
+
+    const headers = ['Exam', ...(canRespond ? [] : ['Examiner']), 'Starts', 'Ends', 'Status'];
+    if (canRespond) headers.push('Response');
+    const rows = data.map(invitation => {
+        const status = invitation.status;
+        const tone = status === 'PENDING' ? 'orange' : status === 'ACCEPTED' ? 'green' : 'gray';
+        const row = [
+            <strong>{invitation.exam}</strong>,
+            ...(canRespond ? [] : [invitation.examiner]),
+            date(invitation.starts_at), date(invitation.ends_at), <Chip tone={tone}>{status}</Chip>,
+        ];
+        if (canRespond) {
+            const disabled = busyId !== null || loading || Boolean(error);
+            row.push(status === 'PENDING' ?
+                <div className="inline-actions">
+                    <Button disabled={disabled} onClick={() => respond(invitation, 'accept')}>Accept</Button>
+                    <Button secondary disabled={disabled} onClick={() => respond(invitation, 'decline')}>Decline</Button>
+                </div> : '—');
+        }
+        return row;
+    });
+
+    return <Panel title={canRespond ? 'Your invitations' : 'Examiner invitations'}
+        sub="Times are shown in your local timezone."
+        action={<Button secondary disabled={loading || busyId !== null} onClick={update}>Refresh</Button>}>
+        {notice && <div role="status"><Notice {...notice} /></div>}
+        <Notice message={error} />
+        {loading ? <p className="muted">Loading invitations…</p> :
+            !error && <Table headers={headers} rows={rows} empty="No invitations yet." />}
+    </Panel>;
+}
+
 function ExamInviteForm({ exam, examiners, usersError, refresh, onClose }) {
     const availability = useLoad('/availability', refresh);
     const [examinerId, setExaminerId] = useState('');
