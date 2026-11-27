@@ -761,6 +761,28 @@ def matching_passages(reader, source_id, terms):
     return [chunk for _, chunk in ranked]
 
 
+def gemini_failure(response):
+    status = response.status
+    try:
+        payload = json.loads(response.read(16384))
+        error = payload.get('error', {})
+        reasons = {d.get('reason') for d in error.get('details', []) if isinstance(d, dict)}
+    except (ValueError, AttributeError, TypeError):
+        reasons = set()
+    if 'API_KEY_INVALID' in reasons:
+        detail = 'API key rejected. Update GEMINI_API_KEY and restart Flask.'
+    else:
+        detail = {
+            400: 'Request rejected. Check model configuration and project eligibility.',
+            401: 'Authentication failed. Check the backend API key.',
+            403: 'Access denied. Check the API key restrictions and project permissions.',
+            404: 'Model unavailable for this project. Check GEMINI_MODEL in the backend.',
+            429: 'Rate or quota limit reached. Check the project quota before retrying.',
+        }.get(status, 'Provider temporarily unavailable. Try again later.' if status >= 500
+              else 'Provider rejected this request.')
+    return fail(f'Gemini HTTP {status}: {detail}', 429 if status == 429 else 502)
+
+
 def gemini_drafts(source_id, passages):
     if not passages:
         return jsonify(questions=[])
@@ -776,14 +798,15 @@ def gemini_drafts(source_id, passages):
     }
     connection = HTTPSConnection('generativelanguage.googleapis.com', timeout=60)
     try:
-        connection.request('POST', '/v1beta/models/gemini-3.5-flash-lite:generateContent',
+        model = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash-lite').strip()
+        if not re.fullmatch(r'[A-Za-z0-9._-]+', model):
+            return fail('Invalid backend GEMINI_MODEL name', 503)
+        connection.request('POST', f'/v1beta/models/{model}:generateContent',
                            body=json.dumps(body).encode(), headers={
                                'Content-Type': 'application/json', 'x-goog-api-key': key})
         response = connection.getresponse()
-        if response.status == 429:
-            return fail('Gemini quota reached. Try again later.', 429)
         if response.status != 200:
-            return fail('Gemini request failed. Check the backend key and model access.', 502)
+            return gemini_failure(response)
         candidate = json.loads(response.read())['candidates'][0]
         if candidate.get('finishReason') != 'STOP':
             return fail('Gemini could not complete a draft for these passages.', 422)

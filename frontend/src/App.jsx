@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, BookOpen, CalendarDays, Users, GraduationCap, ClipboardList, LogOut, Plus, Check, Clock, ChartNoAxesColumnIncreasing, Menu, Search, Bell, ChevronRight, FileQuestion, ShieldCheck, ArrowRight, LockKeyhole, Mail, UserRound, ClipboardCheck, CalendarCheck2, AlertCircle } from 'lucide-react';
+import { LayoutDashboard, BookOpen, CalendarDays, Users, GraduationCap, ClipboardList, LogOut, Plus, Check, Clock, ChartNoAxesColumnIncreasing, Menu, Search, Bell, ChevronLeft, ChevronRight, FileQuestion, ShieldCheck, ArrowRight, LockKeyhole, Mail, UserRound, ClipboardCheck, CalendarCheck2, AlertCircle } from 'lucide-react';
+import './source-workspace.css';
 import { api, errorMessage } from './api';
 
 const icons = { Sources: BookOpen, Invitations: Mail, Overview: LayoutDashboard, Courses: BookOpen, Exams: ClipboardList, People: Users, Slots: CalendarDays, Availability: CalendarCheck2, Bookings: CalendarDays, Questions: FileQuestion, Results: ChartNoAxesColumnIncreasing, 'My Courses': GraduationCap };
@@ -117,23 +118,78 @@ function Sources() {
                 </label> : <p>You have no assigned exams yet.</p>
             )}
         </Panel>
-        {selected && <ExamSources key={selected} examId={selected} />}
+        {selected && <ExamSources key={selected} examId={selected} editable={exams.some(exam => String(exam.id) === selected && exam.status === 'draft')} />}
     </>;
 }
 
-function PassageSearch({ url, openPage }) {
+function PaperQuestion({ examId, draft }) {
+    const [expanded, setExpanded] = useState(false);
+    const [prompt, setPrompt] = useState(draft.question);
+    const [alternatives, setAlternatives] = useState(['', '', '']);
+    const [position, setPosition] = useState(0);
+    const [marks, setMarks] = useState(1);
+    const [saving, setSaving] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [error, setError] = useState('');
+
+    async function save(event) {
+        event.preventDefault();
+        if (saving || saved) return;
+        const options = alternatives.map(value => value.trim());
+        options.splice(position, 0, draft.answer.trim());
+        if (!prompt.trim() || options.some(value => !value) ||
+            new Set(options.map(value => value.toLowerCase())).size !== options.length) {
+            setError('Enter a question and four distinct options.');
+            return;
+        }
+        setSaving(true);
+        setError('');
+        try {
+            await api.post('/exams/' + examId + '/questions', {
+                prompt: prompt.trim(), options, correct_index: position, marks: Number(marks)
+            });
+            setSaved(true);
+        } catch (err) {
+            setError(errorMessage(err));
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    if (saved) return <Notice type="success" message="Added to this exam paper." />;
+    return <div className="paper-review">
+        <button type="button" className="btn primary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Close review' : 'Review and add to paper'}</button>
+        {expanded && (
+            <form className="form-grid" onSubmit={save}>
+                <label className="span-2">Question<textarea value={prompt} required onChange={e => setPrompt(e.target.value)} /></label>
+                <label>Correct answer position<select value={position} onChange={e => setPosition(Number(e.target.value))}>
+                    {['A', 'B', 'C', 'D'].map((letter, i) => <option key={letter} value={i}>{letter}</option>)}
+                </select></label>
+                <label>Marks<input type="number" min="1" step="1" required value={marks} onChange={e => setMarks(e.target.value)} /></label>
+                {alternatives.map((value, i) => <label key={i}>Incorrect option {'ABCD'[i < position ? i : i + 1]}
+                    <input required value={value} onChange={e => setAlternatives(alternatives.map((old, j) => j === i ? e.target.value : old))} />
+                </label>)}
+                <div className="span-2"><Notice message={error} /><button className="btn primary" disabled={saving}>
+                    {saving ? 'Adding…' : 'Add to question paper'}
+                </button></div>
+            </form>)}
+    </div>;
+}
+
+function PassageSearch({ url, openPage, examId, editable }) {
     const [query, setQuery] = useState('');
     const [busy, setBusy] = useState(false);
     const [matches, setMatches] = useState(null);
     const [error, setError] = useState('');
+    const [drafts, setDrafts] = useState(null);
     async function search(event) {
         event.preventDefault();
         if (!query.trim() || busy) return;
-        setBusy(true);
+        setBusy('search');
         setError('');
-        setMatches(null);
+        setMatches(null); setDrafts(null);
         try {
-            const { data } = await api.get(url, { params: { q: query.trim() } });
+            const { data } = await api.get(url + '/search', { params: { q: query.trim() } });
             setMatches(data.matches);
         } catch (err) {
             setError(errorMessage(err));
@@ -141,32 +197,58 @@ function PassageSearch({ url, openPage }) {
             setBusy(false);
         }
     }
-    return <section>
-        <form className="form-grid" onSubmit={search}>
+    async function generate() {
+        setBusy('generate');
+        setDrafts(null);
+        setError('');
+        try {
+            const { data } = await api.post(url + '/drafts', null, { params: { q: query.trim() } });
+            setDrafts(data.questions);
+        } catch (err) {
+            setError(errorMessage(err));
+        } finally {
+            setBusy(false);
+        }
+    }
+    return <section className="pdf-tools">
+        <form className="pdf-search" onSubmit={search}>
             <label>Keywords in this PDF
-                <input value={query} maxLength={200} disabled={busy}
-                    onChange={event => { setQuery(event.target.value); setMatches(null); setError(''); }} />
+                <input value={query} maxLength={200} disabled={!!busy}
+                    onChange={event => { setQuery(event.target.value); setMatches(null); setDrafts(null); setError(''); }} />
             </label>
             <div><button className="btn primary" disabled={busy || !query.trim()}>
-                {busy ? 'Searching…' : 'Find passages'}
+                {busy === 'search' ? 'Searching…' : 'Find passages'}
             </button></div>
         </form>
         <Notice message={error} />
         {matches?.length === 0 && <p>No passage contains all these keywords.</p>}
-        {matches?.map(chunk => <div key={chunk.page + '-' + chunk.number}>
-            <Button secondary onClick={() => openPage(chunk.page)}>Page {chunk.page} · Passage {chunk.number}</Button>
-            <p style={{ overflowWrap: 'anywhere' }}>{chunk.text}</p>
-        </div>)}
+        <div className="pdf-generate">
+            <p>Gemini receives the matching passages. Use non-confidential material only.</p>
+            <button type="button" className="btn primary" onClick={generate} disabled={!!busy || !matches?.length}>{busy === 'generate' ? 'Generating…' : 'Generate draft questions'}</button>
+        </div>
+        {drafts?.length === 0 && <p>Insufficient evidence for a question.</p>}
+        {drafts?.map((draft, index) => <article className="pdf-draft" key={index}>
+            <h4>{draft.question}</h4><p>Answer from the PDF: {draft.answer}</p>
+            <Button secondary onClick={() => openPage(draft.page)}>Page {draft.page} · Passage {draft.passage_number}</Button>
+            {editable ? <PaperQuestion examId={examId} draft={draft} /> :
+                <p>Questions can only be added while this exam is in draft status.</p>}
+        </article>)}
+        {!!matches?.length && <details className="pdf-matches"><summary>Matching passages ({matches.length})</summary>
+            {matches.map(chunk => <div className="pdf-match" key={chunk.page + '-' + chunk.number}>
+                <Button secondary onClick={() => openPage(chunk.page)}>Page {chunk.page} · Passage {chunk.number}</Button>
+                <p style={{ overflowWrap: 'anywhere' }}>{chunk.text}</p>
+            </div>)}
+        </details>}
     </section>;
 }
 
 function SourcePage({ url, page, pageCount, changePage }) {
     const { data, loading, error } = useLoad(url);
-    return <>
-        <div className="panel-head">
-            <Button secondary disabled={page <= 1} onClick={() => changePage(page - 1)}>Previous</Button>
+    return <section className="pdf-page">
+        <div className="pdf-pagination">
+            <button type="button" aria-label="Previous page" title="Previous page" disabled={page <= 1} onClick={() => changePage(page - 1)}><ChevronLeft size={20} /></button>
             <strong>Page {page} of {pageCount}</strong>
-            <Button secondary disabled={page >= pageCount} onClick={() => changePage(page + 1)}>Next</Button>
+            <button type="button" aria-label="Next page" title="Next page" disabled={page >= pageCount} onClick={() => changePage(page + 1)}><ChevronRight size={20} /></button>
         </div>
         <Notice message={error} />
         {loading ? <p>Reading page…</p> : !error && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -183,10 +265,10 @@ function SourcePage({ url, page, pageCount, changePage }) {
                 ))}
             </details>
         )}
-    </>;
+    </section>;
 }
 
-function ExamSources({ examId }) {
+function ExamSources({ examId, editable }) {
     const url = `/exams/${examId}/sources`;
     const [revision, setRevision] = useState(0);
     const { data, error, loading } = useLoad(url, revision);
@@ -244,11 +326,11 @@ function ExamSources({ examId }) {
                 <Button secondary onClick={() => { setSelected(source); setPage(1); }}>Preview text</Button>])}
                 empty="No PDFs uploaded for this exam yet." />}
         </Panel>
-        {selected && <Panel title={selected.filename}>
-            <PassageSearch key={selected.id} url={url + '/' + selected.id + '/search'} openPage={setPage} />
+        {selected && <div className="pdf-workspace"><Panel title={selected.filename}>
+            <PassageSearch examId={examId} editable={editable} key={selected.id} url={url + '/' + selected.id} openPage={setPage} />
             <SourcePage key={selected.id + '-' + page} url={url + '/' + selected.id + '/pages/' + page}
                 page={page} pageCount={selected.page_count} changePage={setPage} />
-        </Panel>}
+        </Panel></div>}
     </>;
 }
 
@@ -394,7 +476,38 @@ function Exams({ user, refresh, update }) { const { data, error } = useLoad('/ex
 function Availability({ refresh, update }) { const { data, error } = useLoad('/availability', refresh); return <><Notice message={error} /><Panel title="Set available hours" sub="Times are entered in your local timezone"><ActionForm fields={[{ name: 'starts_at', label: 'Available from', type: 'datetime-local' }, { name: 'ends_at', label: 'Available until', type: 'datetime-local' }]} onSave={d => api.post('/availability', { starts_at: new Date(d.starts_at).toISOString(), ends_at: new Date(d.ends_at).toISOString() })} onDone={update} /></Panel><Panel title="Availability windows"><Table headers={['Start', 'End']} rows={data.map(x => [date(x.starts_at), date(x.ends_at)])} /></Panel></> }
 function Slots({ user, refresh, update }) { const { data, error } = useLoad('/slots', refresh), { data: exams } = useLoad('/exams', refresh); const [message, setMessage] = useState(''); async function book(id) { try { await api.post('/bookings', { slot_id: id }); setMessage('Slot booked successfully'); update() } catch (e) { setMessage(errorMessage(e)) } } return <><Notice message={error} /><Notice message={message} type={message === 'Slot booked successfully' ? 'success' : 'error'} />{user.role === 'admin' && <Panel title="Schedule an exam slot" sub="Create a date and capacity for an examination"><ActionForm fields={[{ name: 'exam_id', label: 'Examination', type: 'select', options: exams.filter(exam => exam.examiner_id != null).map(x => ({ value: x.id, label: x.title })) }, { name: 'starts_at', label: 'Starts at', type: 'datetime-local' }, { name: 'capacity', label: 'Student capacity', type: 'number', default: 30, min: 1 }]} onSave={d => api.post('/slots', { ...d, starts_at: new Date(d.starts_at).toISOString() })} onDone={update} /></Panel>}<Panel title={user.role === 'student' ? 'Book an examination slot' : 'Scheduled slots'} sub="All times displayed in your local timezone"><Table headers={['Exam', 'Start date', 'Capacity', 'Booked', 'Available', ...(user.role === 'student' ? ['Action'] : [])]} rows={data.map(s => [<strong>{s.exam}</strong>, date(s.starts_at), s.capacity, s.booked, <Chip tone={s.available ? 'green' : 'orange'}>{s.available} left</Chip>, ...(user.role === 'student' ? [<Button disabled={!s.available} onClick={() => book(s.id)}>Book slot</Button>] : [])])} /></Panel></> }
 function Bookings({ user, refresh }) { const { data, error } = useLoad('/bookings', refresh); const [working, setWorking] = useState(null), [questions, setQuestions] = useState([]), [answers, setAnswers] = useState({}), [message, setMessage] = useState(''); const [done, setDone] = useState(new Set()); async function openAttempt(b) { setMessage(''); try { const { data } = await api.get(`/exams/${b.exam_id}/questions`); setQuestions(data); setWorking(b); setAnswers({}) } catch (e) { setMessage(errorMessage(e)) } } async function submit() { try { const { data } = await api.post(`/bookings/${working.id}/submit`, { answers }); setMessage(`Submitted successfully: ${data.score}/${data.max_score} marks`); setDone(old => new Set([...old, working.id])); setWorking(null) } catch (e) { setMessage(errorMessage(e)) } } return <><Notice message={error} /><Notice message={message} type={message.startsWith('Submitted') ? 'success' : 'error'} /><Panel title={user.role === 'student' ? 'Your exam bookings' : 'Student bookings'} sub="Exam attempts are unlocked only during your scheduled time"><Table headers={['Exam', 'Student', 'Start time', ...(user.role === 'student' ? ['Action'] : [])]} rows={data.map(b => [<strong>{b.exam}</strong>, b.student, date(b.starts_at), ...(user.role === 'student' ? [<Button disabled={done.has(b.id)} onClick={() => openAttempt(b)}>{done.has(b.id) ? 'Completed' : 'Attempt exam'}</Button>] : [])])} /></Panel>{working && <div className="modal-cover"><div className="modal"><div className="panel-head"><div><h3>{working.exam}</h3><p>Choose the correct option for each question</p></div><button className="icon-btn" onClick={() => setWorking(null)}>✕</button></div>{questions.map((q, i) => <div className="question" key={q.id}><strong>{i + 1}. {q.prompt} <small>({q.marks} marks)</small></strong>{q.options.map((opt, index) => <label key={index} className="option"><input type="radio" name={`q${q.id}`} checked={answers[q.id] === index} onChange={() => setAnswers({ ...answers, [q.id]: index })} />{opt}</label>)}</div>)}<button className="btn primary wide" onClick={submit}>Submit answers <ArrowRight size={17} /></button></div></div>}</> }
-function Questions({ refresh, update }) { const { data: exams } = useLoad('/exams', refresh); const [selected, setSelected] = useState(''); const { data: questions, error } = useLoad(selected ? `/exams/${selected}/questions` : '/exams', refresh); const exam = exams.find(x => String(x.id) === String(selected)); return <><Panel title="Question bank" sub="Select your assigned exam to manage its questions"><label className="select-alone">Examination<select value={selected} onChange={e => setSelected(e.target.value)}><option value="">Select an examination</option>{exams.map(e => <option value={e.id} key={e.id}>{e.title} ({e.status})</option>)}</select></label></Panel>{selected && <><Notice message={error} />{exam?.status === 'draft' && <Panel title="Add multiple-choice question"><ActionForm fields={[{ name: 'prompt', label: 'Question', wide: true, placeholder: 'Enter your question' }, { name: 'option_1', label: 'Option A' }, { name: 'option_2', label: 'Option B' }, { name: 'option_3', label: 'Option C' }, { name: 'option_4', label: 'Option D' }, { name: 'correct_index', label: 'Correct option', type: 'select', options: [0, 1, 2, 3].map(i => ({ value: String(i), label: `Option ${'ABCD'[i]}` })) }, { name: 'marks', label: 'Marks', type: 'number', min: 1, default: 5 }]} onSave={d => api.post(`/exams/${selected}/questions`, { prompt: d.prompt, options: [d.option_1, d.option_2, d.option_3, d.option_4], correct_index: Number(d.correct_index), marks: Number(d.marks) })} onDone={update} /></Panel>}<Panel title="Current questions" sub={`${questions.length} questions`}><Table headers={['Question', 'Options', 'Correct', 'Marks']} rows={(Array.isArray(questions) ? questions : []).map(q => [q.prompt, q.options.join(' / '), `Option ${'ABCDEF'[q.correct_index]}`, q.marks])} /></Panel></>}</> }
+function Questions({ refresh, update }) {
+    const { data: exams, error } = useLoad('/exams', refresh);
+    const [selected, setSelected] = useState('');
+    const exam = exams.find(item => String(item.id) === selected);
+    return <>
+        <Panel title="Question bank" sub="Select your assigned exam to manage its questions">
+            <Notice message={error} />
+            <label className="select-alone">Examination
+                <select value={selected} onChange={event => setSelected(event.target.value)}>
+                    <option value="">Select an examination</option>
+                    {exams.map(item => <option key={item.id} value={item.id}>{item.title} ({item.status})</option>)}
+                </select>
+            </label>
+        </Panel>
+        {exam && <ExamQuestionList key={exam.id} exam={exam} refresh={refresh} update={update} />}
+    </>;
+}
+
+function ExamQuestionList({ exam, refresh, update }) {
+    const selected = exam.id;
+    const { data: questions, loading, error } = useLoad(`/exams/${selected}/questions`, refresh);
+    return <>
+        {exam?.status === 'draft' && <Panel title="Add multiple-choice question"><ActionForm fields={[{ name: 'prompt', label: 'Question', wide: true, placeholder: 'Enter your question' }, { name: 'option_1', label: 'Option A' }, { name: 'option_2', label: 'Option B' }, { name: 'option_3', label: 'Option C' }, { name: 'option_4', label: 'Option D' }, { name: 'correct_index', label: 'Correct option', type: 'select', options: [0, 1, 2, 3].map(i => ({ value: String(i), label: `Option ${'ABCD'[i]}` })) }, { name: 'marks', label: 'Marks', type: 'number', min: 1, default: 5 }]} onSave={d => api.post(`/exams/${selected}/questions`, { prompt: d.prompt, options: [d.option_1, d.option_2, d.option_3, d.option_4], correct_index: Number(d.correct_index), marks: Number(d.marks) })} onDone={update} /></Panel>}
+        <Panel title="Current questions">
+            <Notice message={error} />
+            {loading ? <p>Loading questions…</p> : !error && <Table
+                headers={['Question', 'Options', 'Correct', 'Marks']}
+                rows={questions.map(q => [q.prompt, Array.isArray(q.options) ? q.options.join(' / ') : '—',
+                'Option ' + 'ABCDEF'[q.correct_index], q.marks])} />}
+        </Panel>
+    </>;
+}
 function Results({ refresh }) { const { data, error } = useLoad('/results', refresh); return <><Notice message={error} /><Panel title="Examination results" sub="Scores are calculated automatically for multiple-choice exams"><Table headers={['Examination', 'Score', 'Maximum', 'Percentage', 'Submitted at']} rows={data.map(r => [<strong>{r.exam}</strong>, <strong>{r.score}</strong>, r.max_score, <Chip tone={r.max_score && r.score / r.max_score >= .5 ? 'green' : 'orange'}>{r.max_score ? Math.round(r.score / r.max_score * 100) : 0}%</Chip>, date(r.submitted_at)])} /></Panel></> }
 export default App;
 

@@ -1,0 +1,138 @@
+.pdf-workspace {
+  min-width: 0;
+}
+
+.pdf-workspace .panel-head h3 {
+  overflow-wrap: anywhere;
+}
+
+.pdf-tools,
+.pdf-page,
+.pdf-draft,
+.pdf-match,
+.paper-review {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.pdf-tools p,
+.pdf-page p,
+.pdf-draft h4 {
+  margin: 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.pdf-search,
+.pdf-generate {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.pdf-search label {
+  flex: 1 1 16rem;
+  max-width: 32rem;
+  display: grid;
+  gap: .45rem;
+}
+
+.pdf-search input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pdf-generate,
+.pdf-draft {
+  background: #f7f8ff;
+  border: 1px solid #e0e3f3;
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.pdf-generate {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pdf-generate p {
+  flex: 1 1 16rem;
+  color: #495576;
+}
+
+.pdf-draft {
+  background: white;
+}
+
+.pdf-tools button {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.pdf-tools .btn {
+  white-space: normal;
+}
+
+.pdf-matches summary,
+.pdf-page summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.pdf-match {
+  margin-top: 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid #e0e3f3;
+}
+
+.pdf-page {
+  margin-top: 1.5rem;
+  border-top: 1px solid #dde1f0;
+  padding-top: 1.25rem;
+}
+
+.pdf-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.pdf-pagination button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid #dcdcf0;
+  background: #f3f1ff;
+  color: #473398;
+  cursor: pointer;
+}
+
+.pdf-pagination button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+@media(max-width: 600px) {
+
+  .pdf-search,
+  .pdf-generate {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pdf-search label,
+  .pdf-generate p {
+    flex: auto;
+    max-width: none;
+  }
+
+  .pdf-tools .btn.primary {
+    width: 100%;
+    justify-content: center;
+  }
+}
