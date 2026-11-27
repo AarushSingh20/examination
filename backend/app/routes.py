@@ -1,3 +1,6 @@
+import re
+from collections import Counter
+from heapq import nlargest
 import hashlib
 import os
 from http.client import HTTPSConnection, HTTPException
@@ -743,6 +746,20 @@ def page_chunks(text, source_id, page_number):
     return chunks
 
 
+def matching_passages(reader, source_id, terms):
+    """Return five passages containing every requested keyword in this source."""
+    def matches():
+        for page_number, page in enumerate(reader.pages, start=1):
+            for chunk in page_chunks(page.extract_text() or '', source_id, page_number):
+                counts = Counter(re.findall(r'\w+', chunk['text'].casefold()))
+                if terms.issubset(counts):
+                    yield sum(counts[word] for word in terms), chunk
+
+    ranked = nlargest(5, matches(), key=lambda item: item[0])
+    return [chunk for _, chunk in ranked]
+
+
+@api.get('/exams/<int:exam_id>/sources/<int:source_id>/search', defaults={'page_number': None})
 @api.get('/exams/<int:exam_id>/sources/<int:source_id>/pages/<int:page_number>')
 @roles_required('examiner')
 def source_page(exam_id, source_id, page_number):
@@ -753,7 +770,14 @@ def source_page(exam_id, source_id, page_number):
            .first())
     if doc is None:
         return fail('Source not found for this examiner and exam', 404)
-    if not 1 <= page_number <= doc.page_count:
+    if page_number is None:
+        query = request.args.get('q', '').strip()
+        if len(query) > 200:
+            return fail('Use a search of 200 characters or fewer')
+        terms = set(re.findall(r'\w+', query.casefold()))
+        if not terms:
+            return fail('Enter one or more keywords')
+    elif not 1 <= page_number <= doc.page_count:
         return fail('Page outside the PDF', 404)
 
     try:
@@ -773,11 +797,18 @@ def source_page(exam_id, source_id, page_number):
         return fail('Stored PDF does not match the uploaded source', 502)
     try:
         reader = PdfReader(BytesIO(contents))
+        if page_number is None:
+            result = jsonify(source_id=doc.id, matches=matching_passages(reader, doc.id, terms))
+            result.cache_control.no_store = True
+            return result
         text = (reader.pages[page_number - 1].extract_text() or '').strip()
     except Exception:
-        return fail('Could not extract text from this PDF page', 422)
+        return fail('Could not extract text from this PDF', 422)
 
     result = jsonify(source_id=doc.id, page=page_number, text=text,
                      chunks=page_chunks(text, doc.id, page_number))
     result.cache_control.no_store = True
     return result
+
+
+

@@ -121,6 +121,45 @@ function Sources() {
     </>;
 }
 
+function PassageSearch({ url, openPage }) {
+    const [query, setQuery] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [matches, setMatches] = useState(null);
+    const [error, setError] = useState('');
+    async function search(event) {
+        event.preventDefault();
+        if (!query.trim() || busy) return;
+        setBusy(true);
+        setError('');
+        setMatches(null);
+        try {
+            const { data } = await api.get(url, { params: { q: query.trim() } });
+            setMatches(data.matches);
+        } catch (err) {
+            setError(errorMessage(err));
+        } finally {
+            setBusy(false);
+        }
+    }
+    return <section>
+        <form className="form-grid" onSubmit={search}>
+            <label>Keywords in this PDF
+                <input value={query} maxLength={200} disabled={busy}
+                    onChange={event => { setQuery(event.target.value); setMatches(null); setError(''); }} />
+            </label>
+            <div><button className="btn primary" disabled={busy || !query.trim()}>
+                {busy ? 'Searching…' : 'Find passages'}
+            </button></div>
+        </form>
+        <Notice message={error} />
+        {matches?.length === 0 && <p>No passage contains all these keywords.</p>}
+        {matches?.map(chunk => <div key={chunk.page + '-' + chunk.number}>
+            <Button secondary onClick={() => openPage(chunk.page)}>Page {chunk.page} · Passage {chunk.number}</Button>
+            <p style={{ overflowWrap: 'anywhere' }}>{chunk.text}</p>
+        </div>)}
+    </section>;
+}
+
 function SourcePage({ url, page, pageCount, changePage }) {
     const { data, loading, error } = useLoad(url);
     return <>
@@ -206,6 +245,7 @@ function ExamSources({ examId }) {
                 empty="No PDFs uploaded for this exam yet." />}
         </Panel>
         {selected && <Panel title={selected.filename}>
+            <PassageSearch key={selected.id} url={url + '/' + selected.id + '/search'} openPage={setPage} />
             <SourcePage key={selected.id + '-' + page} url={url + '/' + selected.id + '/pages/' + page}
                 page={page} pageCount={selected.page_count} changePage={setPage} />
         </Panel>}
@@ -357,3 +397,6 @@ function Bookings({ user, refresh }) { const { data, error } = useLoad('/booking
 function Questions({ refresh, update }) { const { data: exams } = useLoad('/exams', refresh); const [selected, setSelected] = useState(''); const { data: questions, error } = useLoad(selected ? `/exams/${selected}/questions` : '/exams', refresh); const exam = exams.find(x => String(x.id) === String(selected)); return <><Panel title="Question bank" sub="Select your assigned exam to manage its questions"><label className="select-alone">Examination<select value={selected} onChange={e => setSelected(e.target.value)}><option value="">Select an examination</option>{exams.map(e => <option value={e.id} key={e.id}>{e.title} ({e.status})</option>)}</select></label></Panel>{selected && <><Notice message={error} />{exam?.status === 'draft' && <Panel title="Add multiple-choice question"><ActionForm fields={[{ name: 'prompt', label: 'Question', wide: true, placeholder: 'Enter your question' }, { name: 'option_1', label: 'Option A' }, { name: 'option_2', label: 'Option B' }, { name: 'option_3', label: 'Option C' }, { name: 'option_4', label: 'Option D' }, { name: 'correct_index', label: 'Correct option', type: 'select', options: [0, 1, 2, 3].map(i => ({ value: String(i), label: `Option ${'ABCD'[i]}` })) }, { name: 'marks', label: 'Marks', type: 'number', min: 1, default: 5 }]} onSave={d => api.post(`/exams/${selected}/questions`, { prompt: d.prompt, options: [d.option_1, d.option_2, d.option_3, d.option_4], correct_index: Number(d.correct_index), marks: Number(d.marks) })} onDone={update} /></Panel>}<Panel title="Current questions" sub={`${questions.length} questions`}><Table headers={['Question', 'Options', 'Correct', 'Marks']} rows={(Array.isArray(questions) ? questions : []).map(q => [q.prompt, q.options.join(' / '), `Option ${'ABCDEF'[q.correct_index]}`, q.marks])} /></Panel></>}</> }
 function Results({ refresh }) { const { data, error } = useLoad('/results', refresh); return <><Notice message={error} /><Panel title="Examination results" sub="Scores are calculated automatically for multiple-choice exams"><Table headers={['Examination', 'Score', 'Maximum', 'Percentage', 'Submitted at']} rows={data.map(r => [<strong>{r.exam}</strong>, <strong>{r.score}</strong>, r.max_score, <Chip tone={r.max_score && r.score / r.max_score >= .5 ? 'green' : 'orange'}>{r.max_score ? Math.round(r.score / r.max_score * 100) : 0}%</Chip>, date(r.submitted_at)])} /></Panel></> }
 export default App;
+
+
+
