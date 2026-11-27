@@ -197,3 +197,28 @@ class Notification(db.Model):
             'is_read': self.is_read,
             'created_at': self.created_at.isoformat() + 'Z',
         }
+
+
+class SourceDocument(db.Model):
+    """An uploaded PDF belonging to one exam; selection is per generation request."""
+
+    __tablename__ = 'source_documents'
+
+    id = db.Column(db.Integer, primary_key=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('exams.id'), nullable=False, index=True)
+    uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=False)
+    storage_key = db.Column(db.String(512), nullable=False, unique=True)
+    sha256 = db.Column(db.String(64), nullable=False)
+    status = db.Column(db.String(16), nullable=False, default='UPLOADED')
+    page_count = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "status IN ('UPLOADED', 'PROCESSING', 'READY', 'FAILED')",
+            name='ck_source_document_status',
+        ),
+        db.CheckConstraint('page_count IS NULL OR page_count > 0',
+                           name='ck_source_document_page_count'),
+    )

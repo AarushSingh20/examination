@@ -3,8 +3,8 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-
 import { LayoutDashboard, BookOpen, CalendarDays, Users, GraduationCap, ClipboardList, LogOut, Plus, Check, Clock, ChartNoAxesColumnIncreasing, Menu, Search, Bell, ChevronRight, FileQuestion, ShieldCheck, ArrowRight, LockKeyhole, Mail, UserRound, ClipboardCheck, CalendarCheck2, AlertCircle } from 'lucide-react';
 import { api, errorMessage } from './api';
 
-const icons = { Invitations: Mail, Overview: LayoutDashboard, Courses: BookOpen, Exams: ClipboardList, People: Users, Slots: CalendarDays, Availability: CalendarCheck2, Bookings: CalendarDays, Questions: FileQuestion, Results: ChartNoAxesColumnIncreasing, 'My Courses': GraduationCap };
-const menus = { admin: ['Overview', 'Courses', 'Exams', 'Invitations', 'People', 'Slots', 'Bookings', 'Results'], examiner: ['Overview', 'Exams', 'Invitations', 'Availability', 'Questions', 'Bookings', 'Results'], student: ['Overview', 'My Courses', 'Exams', 'Slots', 'Bookings', 'Results'] };
+const icons = { Sources: BookOpen, Invitations: Mail, Overview: LayoutDashboard, Courses: BookOpen, Exams: ClipboardList, People: Users, Slots: CalendarDays, Availability: CalendarCheck2, Bookings: CalendarDays, Questions: FileQuestion, Results: ChartNoAxesColumnIncreasing, 'My Courses': GraduationCap };
+const menus = { admin: ['Overview', 'Courses', 'Exams', 'Invitations', 'People', 'Slots', 'Bookings', 'Results'], examiner: ['Overview', 'Exams', 'Sources', 'Invitations', 'Availability', 'Questions', 'Bookings', 'Results'], student: ['Overview', 'My Courses', 'Exams', 'Slots', 'Bookings', 'Results'] };
 const colors = ['purple', 'blue', 'orange', 'green', 'pink'];
 
 function App() {
@@ -98,10 +98,86 @@ function Table({ headers, rows, empty = 'Nothing here yet' }) { return <div clas
 function Chip({ children, tone = 'gray' }) { return <span className={`chip ${tone}`}>{children}</span> }
 function date(s) { return s ? new Date(s).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—' }
 function Button({ children, onClick, secondary = false, disabled = false }) { return <button disabled={disabled} className={`btn ${secondary ? 'secondary' : 'primary'} small`} onClick={onClick}>{children}</button> }
-function Section({ section, user, refresh, update, navigateTo }) { switch (section) { case 'Invitations': return <Invitations user={user} refresh={refresh} update={update} />; case 'Overview': return <Overview user={user} refresh={refresh} navigateTo={navigateTo} />; case 'Courses': case 'My Courses': return <Courses user={user} refresh={refresh} update={update} />; case 'People': return <People refresh={refresh} update={update} />; case 'Exams': return <Exams user={user} refresh={refresh} update={update} />; case 'Availability': return <Availability refresh={refresh} update={update} />; case 'Slots': return <Slots user={user} refresh={refresh} update={update} />; case 'Bookings': return <Bookings user={user} refresh={refresh} />; case 'Questions': return <Questions user={user} refresh={refresh} update={update} />; case 'Results': return <Results user={user} refresh={refresh} />; default: return null } }
+function Section({ section, user, refresh, update, navigateTo }) { switch (section) { case 'Sources': return <Sources />; case 'Invitations': return <Invitations user={user} refresh={refresh} update={update} />; case 'Overview': return <Overview user={user} refresh={refresh} navigateTo={navigateTo} />; case 'Courses': case 'My Courses': return <Courses user={user} refresh={refresh} update={update} />; case 'People': return <People refresh={refresh} update={update} />; case 'Exams': return <Exams user={user} refresh={refresh} update={update} />; case 'Availability': return <Availability refresh={refresh} update={update} />; case 'Slots': return <Slots user={user} refresh={refresh} update={update} />; case 'Bookings': return <Bookings user={user} refresh={refresh} />; case 'Questions': return <Questions user={user} refresh={refresh} update={update} />; case 'Results': return <Results user={user} refresh={refresh} />; default: return null } }
 function Overview({ user, refresh, navigateTo }) { const { data, loading, error } = useLoad('/dashboard', refresh); const stats = data.stats || {}; const statIcons = [Users, BookOpen, ClipboardList, CalendarDays, ChartNoAxesColumnIncreasing]; return <><Notice message={error} /><div className="stats-grid">{Object.entries(stats).map(([name, value], i) => { const I = statIcons[i % statIcons.length]; return <div className="stat-card" key={name}><div className={`stat-icon ${colors[i % colors.length]}`}><I size={22} /></div><span className="stat-label">{name}</span><div className="stat-number">{value}</div><div className="stat-foot">Live workspace data <span>↗</span></div></div> })}{loading && <p className="muted">Loading dashboard...</p>}</div><div className="overview-grid"><Panel title={user.role === 'student' ? 'Your upcoming bookings' : 'Recently managed exams'} sub="A quick look at your activity" action={<button className="text-button" onClick={() => navigateTo(user.role === 'student' ? 'Bookings' : 'Exams')}>View all <ArrowRight size={14} /></button>}>{user.role === 'student' ? <Table headers={['Exam', 'Scheduled for']} rows={(data.bookings || []).map(x => [x.exam, date(x.starts_at)])} /> : <Table headers={['Exam', 'Course', 'Status']} rows={(data.recent_exams || []).map(x => [x.title, x.course, <Chip tone={x.status === 'published' ? 'green' : 'orange'}>{x.status}</Chip>])} />}</Panel><Panel title="Quick actions" sub="Pick up where you left off"><div className="quick-actions">{(user.role === 'admin' ? [['Manage courses', 'Courses'], ['Schedule examinations', 'Exams'], ['Manage exam slots', 'Slots']] : user.role === 'examiner' ? [['View assigned exams', 'Exams'], ['Write exam questions', 'Questions'], ['Set availability', 'Availability']] : [['Find available exams', 'Exams'], ['Book a slot', 'Slots'], ['View results', 'Results']]).map(([name, target]) => <button key={name} onClick={() => navigateTo(target)}><span>{name}</span><ArrowRight size={17} /></button>)}</div></Panel></div></> }
 function Courses({ user, refresh, update }) { const { data, error } = useLoad('/courses', refresh); const mine = useLoad('/enrollments/me', refresh); const [message, setMessage] = useState(''); const enrolled = new Set((mine.data || []).map(x => x.id)); async function enroll(course) { try { await api.post('/enrollments', { course_id: course.id }); setMessage('Enrolled successfully'); update() } catch (e) { setMessage(errorMessage(e)) } } return <><Notice message={error} /><Notice message={message} type={message === 'Enrolled successfully' ? 'success' : 'error'} />{user.role === 'admin' && <Panel title="Create a course" sub="Add a new course to your catalog"><ActionForm fields={[{ name: 'code', label: 'Course code', placeholder: 'CS201' }, { name: 'title', label: 'Course title', placeholder: 'Data Structures' }, { name: 'description', label: 'Description', wide: true, required: false }]} onSave={d => api.post('/courses', d)} onDone={update} /></Panel>}<Panel title="Course catalog" sub={`${data.length} available courses`}><Table headers={['Code', 'Course name', 'Description', ...(user.role === 'student' ? ['Enrollment'] : [])]} rows={data.map(c => [<strong>{c.code}</strong>, c.title, c.description || '—', ...(user.role === 'student' ? [enrolled.has(c.id) ? <Chip tone="green">Enrolled</Chip> : <Button onClick={() => enroll(c)}>Enroll</Button>] : [])])} /></Panel></> }
 function People({ refresh, update }) { const { data, error } = useLoad('/users', refresh); return <><Notice message={error} /><Panel title="Add an examiner" sub="Examiner login credentials are created here"><ActionForm fields={[{ name: 'name', label: 'Full name', placeholder: 'Dr. Aditi Sharma' }, { name: 'email', label: 'Email', type: 'email', placeholder: 'faculty@university.edu' }, { name: 'password', label: 'Temporary password', type: 'password', wide: true, placeholder: 'At least 8 characters' }]} onSave={d => api.post('/users/examiners', d)} onDone={update} /></Panel><Panel title="Directory" sub={`${data.length} registered users`}><Table headers={['Name', 'Email', 'Role']} rows={data.map(u => [<strong>{u.name}</strong>, u.email, <Chip tone={u.role === 'admin' ? 'purple' : u.role === 'examiner' ? 'blue' : 'green'}>{u.role}</Chip>])} /></Panel></> }
+function Sources() {
+    const { data: exams, error, loading } = useLoad('/exams');
+    const [selected, setSelected] = useState('');
+    return <>
+        <Panel title="Exam sources" sub="Choose the assigned exam for this PDF.">
+            <Notice message={error} />
+            {loading ? <p>Loading exams…</p> : !error && (
+                exams.length ? <label className="select-alone">Examination
+                    <select value={selected} onChange={event => setSelected(event.target.value)}>
+                        <option value="">Select an exam</option>
+                        {exams.map(exam => <option key={exam.id} value={exam.id}>{exam.title} (#{exam.id})</option>)}
+                    </select>
+                </label> : <p>You have no assigned exams yet.</p>
+            )}
+        </Panel>
+        {selected && <ExamSources key={selected} examId={selected} />}
+    </>;
+}
+
+function ExamSources({ examId }) {
+    const url = `/exams/${examId}/sources`;
+    const [revision, setRevision] = useState(0);
+    const { data, error, loading } = useLoad(url, revision);
+    const [sending, setSending] = useState(false);
+    const [uploadError, setUploadError] = useState('');
+    const [message, setMessage] = useState('');
+
+    async function upload(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const file = form.elements.pdf.files[0];
+        setMessage('');
+        setUploadError('');
+        if (!file || !file.name.toLowerCase().endsWith('.pdf') || !file.size) {
+            setUploadError('Choose a non-empty PDF file.');
+            return;
+        }
+        if (file.size > 20 * 1024 * 1024) {
+            setUploadError('Choose a PDF of 20 MB or less.');
+            return;
+        }
+        const body = new FormData();
+        body.append('file', file);
+        setSending(true);
+        try {
+            const response = await api.post(url, body);
+            setMessage(response.status === 201 ? 'PDF uploaded.' : 'This PDF already exists for this exam.');
+            form.reset();
+            setRevision(value => value + 1);
+        } catch (err) {
+            setUploadError(errorMessage(err));
+        } finally {
+            setSending(false);
+        }
+    }
+
+    return <>
+        <Panel title="Upload a source PDF" sub="Maximum file size is 20 MB.">
+            <form className="form-grid" onSubmit={upload}>
+                <label className="span-2">PDF file
+                    <input name="pdf" type="file" accept=".pdf,application/pdf" required disabled={sending}
+                        onChange={() => { setUploadError(''); setMessage(''); }} />
+                </label>
+                <div><button className="btn primary" disabled={sending}>{sending ? 'Uploading…' : 'Upload PDF'}</button></div>
+            </form>
+            <Notice message={uploadError} /><Notice message={message} type="success" />
+        </Panel>
+        <Panel title="Uploaded sources">
+            <Notice message={error} />
+            {loading ? <p>Loading sources…</p> : !error && <Table headers={['File', 'Pages', 'Status']}
+                rows={data.map(source => [source.filename, source.page_count, source.status])}
+                empty="No PDFs uploaded for this exam yet." />}
+        </Panel>
+    </>;
+}
+
 function Invitations({ user, refresh, update }) {
     const { data, loading, error } = useLoad('/invitations', refresh);
     const [busyId, setBusyId] = useState(null);

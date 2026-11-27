@@ -1,9 +1,16 @@
+import hashlib
+import os
+from http.client import HTTPSConnection, HTTPException
+from io import BytesIO
+from pathlib import PureWindowsPath
+from urllib.parse import urlsplit
 from datetime import datetime, timedelta
+from pypdf import PdfReader
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token
 from sqlalchemy import func
 from .extensions import db
-from .models import User, Course, Enrollment, Exam, ExamInvitation, Notification, Availability, ExamSlot, Booking, Question, Submission, utcnow
+from .models import User, Course, Enrollment, Exam, ExamInvitation, Notification, SourceDocument, Availability, ExamSlot, Booking, Question, Submission, utcnow
 from .authz import roles_required, current_user
 
 api = Blueprint('routes', __name__)
@@ -628,3 +635,86 @@ def read_notification(notification_id):
         note.is_read = True
         db.session.commit()
     return jsonify(note.to_dict())
+
+
+PDF_BYTE_LIMIT = 20 * 1024 * 1024
+
+
+def store_source_pdf(key, contents):
+    project = urlsplit(os.environ.get('SUPABASE_URL', ''))
+    secret = os.environ.get('SUPABASE_SECRET_KEY', '')
+    if project.scheme != 'https' or not project.hostname or not secret.startswith('sb_secret_'):
+        raise RuntimeError('Private storage configuration missing')
+    connection = HTTPSConnection(project.hostname, timeout=60)
+    try:
+        connection.request('POST', '/storage/v1/object/exam-source-pdfs/' + key, body=contents,
+                           headers={'apikey': secret, 'Content-Type': 'application/pdf',
+                                    'x-upsert': 'true'})
+        response = connection.getresponse()
+        if not 200 <= response.status < 300:
+            raise RuntimeError('Private storage rejected upload')
+    finally:
+        connection.close()
+
+
+def source_summary(doc):
+    return {'id': doc.id, 'exam_id': doc.exam_id, 'filename': doc.original_filename,
+            'status': doc.status, 'page_count': doc.page_count}
+
+
+@api.route('/exams/<int:exam_id>/sources', methods=['GET', 'POST'])
+@roles_required('examiner')
+def exam_sources(exam_id):
+    owner = current_user().id
+    assigned = Exam.query.filter_by(id=exam_id, examiner_id=owner)
+    if assigned.first() is None:
+        return fail('Assigned exam not found', 404)
+    if request.method == 'GET':
+        docs = SourceDocument.query.filter_by(exam_id=exam_id).order_by(SourceDocument.id.desc())
+        return jsonify([source_summary(doc) for doc in docs])
+
+    # Allow room for the multipart form headers in addition to the PDF bytes.
+    request.max_content_length = PDF_BYTE_LIMIT + 1024 * 1024
+    if request.mimetype != 'multipart/form-data':
+        return fail('Use a multipart form with a PDF in the file field', 415)
+    upload = request.files.get('file')
+    if upload is None:
+        return fail('Select a PDF')
+    name = PureWindowsPath(upload.filename or '').name
+    if not name.lower().endswith('.pdf') or len(name) > 255:
+        return fail('Select a PDF with a filename of at most 255 characters', 415)
+    contents = upload.stream.read(PDF_BYTE_LIMIT + 1)
+    if len(contents) > PDF_BYTE_LIMIT:
+        return fail('PDF exceeds the 20 MB limit', 413)
+    if not contents.startswith(b'%PDF-'):
+        return fail('Invalid PDF file', 415)
+    try:
+        reader = PdfReader(BytesIO(contents))
+        if reader.is_encrypted:
+            return fail('Upload an unlocked PDF')
+        pages = len(reader.pages)
+    except Exception:
+        return fail('Could not read this PDF', 422)
+    if not pages:
+        return fail('PDF has no pages', 422)
+
+    # Serialize same-exam uploads and recheck assignment before saving.
+    if assigned.with_for_update().first() is None:
+        return fail('Assigned exam not found', 404)
+    digest = hashlib.sha256(contents).hexdigest()
+    key = f'exams/{exam_id}/{digest}.pdf'
+    existing = SourceDocument.query.filter_by(storage_key=key).first()
+    if existing:
+        return jsonify(source_summary(existing)), 200
+
+    doc = SourceDocument(exam_id=exam_id, uploaded_by=owner, original_filename=name,
+                         storage_key=key, sha256=digest, page_count=pages, status='UPLOADED')
+    db.session.add(doc)
+    db.session.flush()
+    try:
+        store_source_pdf(key, contents)
+    except (RuntimeError, OSError, HTTPException, ValueError):
+        db.session.rollback()
+        return fail('Could not save PDF to private storage. Check backend storage settings.', 502)
+    db.session.commit()
+    return jsonify(source_summary(doc)), 201
