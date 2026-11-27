@@ -1,3 +1,5 @@
+import json
+from .question_generation import build_generation_messages, validate_drafts
 import re
 from collections import Counter
 from heapq import nlargest
@@ -759,6 +761,49 @@ def matching_passages(reader, source_id, terms):
     return [chunk for _, chunk in ranked]
 
 
+def gemini_drafts(source_id, passages):
+    if not passages:
+        return jsonify(questions=[])
+    key = os.environ.get('GEMINI_API_KEY')
+    if not key:
+        return fail('Configure GEMINI_API_KEY on the backend', 503)
+    system, evidence = build_generation_messages(source_id, passages)
+    body = {
+        'systemInstruction': {'parts': [{'text': system['content'] +
+            ' Choose a quote that directly answers the question and use it verbatim as the answer.'}]},
+        'contents': [{'role': 'user', 'parts': [{'text': evidence['content']}]}],
+        'generationConfig': {'responseMimeType': 'application/json', 'temperature': 0.2},
+    }
+    connection = HTTPSConnection('generativelanguage.googleapis.com', timeout=60)
+    try:
+        connection.request('POST', '/v1beta/models/gemini-3.5-flash-lite:generateContent',
+                           body=json.dumps(body).encode(), headers={
+                               'Content-Type': 'application/json', 'x-goog-api-key': key})
+        response = connection.getresponse()
+        if response.status == 429:
+            return fail('Gemini quota reached. Try again later.', 429)
+        if response.status != 200:
+            return fail('Gemini request failed. Check the backend key and model access.', 502)
+        candidate = json.loads(response.read())['candidates'][0]
+        if candidate.get('finishReason') != 'STOP':
+            return fail('Gemini could not complete a draft for these passages.', 422)
+        raw = ''.join(part['text'] for part in candidate['content']['parts']
+                      if 'text' in part and not part.get('thought'))
+        drafts = validate_drafts(json.loads(raw), source_id, passages)
+        for draft in drafts:
+            draft['answer'] = draft['quote']
+        result = jsonify(questions=drafts)
+        result.cache_control.no_store = True
+        return result
+    except (OSError, HTTPException):
+        return fail('Could not reach Gemini. Try again later.', 503)
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+        return fail('Could not verify the generated citations. Try another topic.', 422)
+    finally:
+        connection.close()
+
+
+@api.post('/exams/<int:exam_id>/sources/<int:source_id>/drafts', defaults={'page_number': None})
 @api.get('/exams/<int:exam_id>/sources/<int:source_id>/search', defaults={'page_number': None})
 @api.get('/exams/<int:exam_id>/sources/<int:source_id>/pages/<int:page_number>')
 @roles_required('examiner')
@@ -798,13 +843,18 @@ def source_page(exam_id, source_id, page_number):
     try:
         reader = PdfReader(BytesIO(contents))
         if page_number is None:
-            result = jsonify(source_id=doc.id, matches=matching_passages(reader, doc.id, terms))
-            result.cache_control.no_store = True
-            return result
-        text = (reader.pages[page_number - 1].extract_text() or '').strip()
+            matches = matching_passages(reader, doc.id, terms)
+        else:
+            text = (reader.pages[page_number - 1].extract_text() or '').strip()
     except Exception:
         return fail('Could not extract text from this PDF', 422)
 
+    if page_number is None:
+        if request.method == 'POST':
+            return gemini_drafts(doc.id, matches)
+        result = jsonify(source_id=doc.id, matches=matches)
+        result.cache_control.no_store = True
+        return result
     result = jsonify(source_id=doc.id, page=page_number, text=text,
                      chunks=page_chunks(text, doc.id, page_number))
     result.cache_control.no_store = True
