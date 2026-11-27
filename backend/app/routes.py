@@ -724,6 +724,25 @@ def exam_sources(exam_id):
     return jsonify(source_summary(doc)), 201
 
 
+def page_chunks(text, source_id, page_number):
+    """Split one page into word windows and retain its citation metadata."""
+    words = text.split()
+    window = 180
+    overlap = 30
+    chunks = []
+    for start in range(0, len(words), window - overlap):
+        end = min(start + window, len(words))
+        chunks.append({
+            'source_id': source_id,
+            'page': page_number,
+            'number': len(chunks) + 1,
+            'text': ' '.join(words[start:end]),
+        })
+        if end == len(words):
+            break
+    return chunks
+
+
 @api.get('/exams/<int:exam_id>/sources/<int:source_id>/pages/<int:page_number>')
 @roles_required('examiner')
 def source_page(exam_id, source_id, page_number):
@@ -758,6 +777,7 @@ def source_page(exam_id, source_id, page_number):
     except Exception:
         return fail('Could not extract text from this PDF page', 422)
 
-    result = jsonify(source_id=doc.id, page=page_number, text=text)
+    result = jsonify(source_id=doc.id, page=page_number, text=text,
+                     chunks=page_chunks(text, doc.id, page_number))
     result.cache_control.no_store = True
     return result

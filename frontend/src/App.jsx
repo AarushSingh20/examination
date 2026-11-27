@@ -133,6 +133,17 @@ function SourcePage({ url, page, pageCount, changePage }) {
         {loading ? <p>Reading page…</p> : !error && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
             {data.text || 'No selectable text on this page. It may be blank or scanned.'}
         </p>}
+        {!loading && !error && data.chunks?.length > 0 && (
+            <details>
+                <summary>View passages ({data.chunks.length})</summary>
+                {data.chunks.map(chunk => (
+                    <section key={chunk.number}>
+                        <strong>Page {chunk.page} · Passage {chunk.number}</strong>
+                        <p style={{ overflowWrap: 'anywhere' }}>{chunk.text}</p>
+                    </section>
+                ))}
+            </details>
+        )}
     </>;
 }
 
