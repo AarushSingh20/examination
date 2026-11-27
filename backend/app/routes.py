@@ -203,7 +203,23 @@ def exams():
     elif u.role == 'student':
         enrolled = db.session.query(Enrollment.course_id).filter_by(student_id=u.id)
         q = q.filter(Exam.status == 'published', Exam.course_id.in_(enrolled))
-    return jsonify([e.to_dict() for e in q.order_by(Exam.id.desc()).all()])
+    rows = q.order_by(Exam.id.desc()).all()
+    schedule = {}
+    slots = (db.session.query(ExamSlot.exam_id, ExamSlot.starts_at)
+             .filter(ExamSlot.exam_id.in_(q.with_entities(Exam.id)))
+             .order_by(ExamSlot.starts_at, ExamSlot.id))
+    for exam_id, start in slots:
+        schedule.setdefault(exam_id, []).append(start)
+    result = []
+    for exam in rows:
+        item = exam.to_dict()
+        item['slots'] = [
+            {'starts_at': start.isoformat() + 'Z',
+             'ends_at': (start + timedelta(minutes=exam.duration_minutes)).isoformat() + 'Z'}
+            for start in schedule.get(exam.id, [])
+        ]
+        result.append(item)
+    return jsonify(result)
 
 @api.post('/exams')
 @roles_required('admin')
@@ -234,10 +250,55 @@ def create_exam():
     db.session.commit()
     return jsonify(e.to_dict()), 201
 
+@api.patch('/exams/<int:exam_id>')
+@roles_required('admin')
+def edit_exam(exam_id):
+    exam = Exam.query.filter_by(id=exam_id).with_for_update().first()
+    if exam is None:
+        return fail('Exam not found', 404)
+    changes = request.get_json(silent=True)
+    allowed = {'title', 'course_id', 'examiner_id', 'duration_minutes', 'total_marks'}
+    if not isinstance(changes, dict) or not changes or changes.keys() - allowed:
+        return fail('Choose a valid exam detail to update')
+    if 'title' in changes:
+        title = changes['title']
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 180:
+            return fail('Enter a title of 1 to 180 characters')
+        changes['title'] = title.strip()
+    for field in changes.keys() - {'title'}:
+        value = changes[field]
+        if field == 'examiner_id' and value is None:
+            continue
+        if type(value) is not int or not 1 <= value <= 2147483647:
+            return fail('Course, examiner, duration and marks must be valid positive integers')
+    changes = {key: value for key, value in changes.items() if getattr(exam, key) != value}
+    if 'course_id' in changes and not db.session.get(Course, changes['course_id']):
+        return fail('Course not found')
+    if changes.get('examiner_id') is not None:
+        examiner = db.session.get(User, changes['examiner_id'])
+        if not examiner or examiner.role != 'examiner':
+            return fail('Select an examiner account')
+    if changes.keys() & {'examiner_id', 'duration_minutes', 'course_id'}:
+        if ExamSlot.query.filter_by(exam_id=exam_id).first():
+            return fail('Existing slots use this course, examiner and duration. You can edit the title or total marks.', 409)
+        if exam.status == 'published' and changes.get('examiner_id', exam.examiner_id) is None:
+            return fail('A published exam needs an examiner', 409)
+        if changes.keys() & {'duration_minutes', 'examiner_id'}:
+            active = ExamInvitation.query.filter_by(exam_id=exam_id).filter(
+                (ExamInvitation.status == 'ACCEPTED') |
+                ((ExamInvitation.status == 'PENDING') & (ExamInvitation.expires_at > utcnow())))
+            if active.first():
+                return fail('An active or accepted invitation already uses this examiner and duration.', 409)
+    for key, value in changes.items():
+        setattr(exam, key, value)
+    db.session.commit()
+    return jsonify(exam.to_dict())
+
+
 @api.patch('/exams/<int:exam_id>/status')
 @roles_required('admin')
 def change_status(exam_id):
-    e = db.session.get(Exam, exam_id)
+    e = Exam.query.filter_by(id=exam_id).with_for_update().first()
     if not e:
         return fail('Exam not found', 404)
     status = payload().get('status')
@@ -286,7 +347,7 @@ def slots():
 @roles_required('admin')
 def create_slot():
     d = payload()
-    e = db.session.get(Exam, positive_int(d.get('exam_id')))
+    e = Exam.query.filter_by(id=positive_int(d.get('exam_id'))).with_for_update().first()
     starts = iso_utc(d.get('starts_at'))
     capacity = positive_int(d.get('capacity'))
     if not e or not starts or starts <= utcnow() or not capacity:
