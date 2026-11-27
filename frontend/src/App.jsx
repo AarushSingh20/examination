@@ -121,6 +121,21 @@ function Sources() {
     </>;
 }
 
+function SourcePage({ url, page, pageCount, changePage }) {
+    const { data, loading, error } = useLoad(url);
+    return <>
+        <div className="panel-head">
+            <Button secondary disabled={page <= 1} onClick={() => changePage(page - 1)}>Previous</Button>
+            <strong>Page {page} of {pageCount}</strong>
+            <Button secondary disabled={page >= pageCount} onClick={() => changePage(page + 1)}>Next</Button>
+        </div>
+        <Notice message={error} />
+        {loading ? <p>Reading page…</p> : !error && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {data.text || 'No selectable text on this page. It may be blank or scanned.'}
+        </p>}
+    </>;
+}
+
 function ExamSources({ examId }) {
     const url = `/exams/${examId}/sources`;
     const [revision, setRevision] = useState(0);
@@ -128,6 +143,9 @@ function ExamSources({ examId }) {
     const [sending, setSending] = useState(false);
     const [uploadError, setUploadError] = useState('');
     const [message, setMessage] = useState('');
+
+    const [selected, setSelected] = useState(null);
+    const [page, setPage] = useState(1);
 
     async function upload(event) {
         event.preventDefault();
@@ -171,10 +189,15 @@ function ExamSources({ examId }) {
         </Panel>
         <Panel title="Uploaded sources">
             <Notice message={error} />
-            {loading ? <p>Loading sources…</p> : !error && <Table headers={['File', 'Pages', 'Status']}
-                rows={data.map(source => [source.filename, source.page_count, source.status])}
+            {loading ? <p>Loading sources…</p> : !error && <Table headers={['File', 'Pages', 'Status', 'Text']}
+                rows={data.map(source => [source.filename, source.page_count, source.status,
+                <Button secondary onClick={() => { setSelected(source); setPage(1); }}>Preview text</Button>])}
                 empty="No PDFs uploaded for this exam yet." />}
         </Panel>
+        {selected && <Panel title={selected.filename}>
+            <SourcePage key={selected.id + '-' + page} url={url + '/' + selected.id + '/pages/' + page}
+                page={page} pageCount={selected.page_count} changePage={setPage} />
+        </Panel>}
     </>;
 }
 

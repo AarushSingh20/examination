@@ -640,12 +640,16 @@ def read_notification(notification_id):
 PDF_BYTE_LIMIT = 20 * 1024 * 1024
 
 
-def store_source_pdf(key, contents):
+def storage_connection():
     project = urlsplit(os.environ.get('SUPABASE_URL', ''))
     secret = os.environ.get('SUPABASE_SECRET_KEY', '')
     if project.scheme != 'https' or not project.hostname or not secret.startswith('sb_secret_'):
         raise RuntimeError('Private storage configuration missing')
-    connection = HTTPSConnection(project.hostname, timeout=60)
+    return HTTPSConnection(project.hostname, timeout=60), secret
+
+
+def store_source_pdf(key, contents):
+    connection, secret = storage_connection()
     try:
         connection.request('POST', '/storage/v1/object/exam-source-pdfs/' + key, body=contents,
                            headers={'apikey': secret, 'Content-Type': 'application/pdf',
@@ -718,3 +722,42 @@ def exam_sources(exam_id):
         return fail('Could not save PDF to private storage. Check backend storage settings.', 502)
     db.session.commit()
     return jsonify(source_summary(doc)), 201
+
+
+@api.get('/exams/<int:exam_id>/sources/<int:source_id>/pages/<int:page_number>')
+@roles_required('examiner')
+def source_page(exam_id, source_id, page_number):
+    examiner_id = current_user().id
+    doc = (SourceDocument.query.join(Exam, Exam.id == SourceDocument.exam_id)
+           .filter(SourceDocument.id == source_id, Exam.id == exam_id,
+                   Exam.examiner_id == examiner_id, SourceDocument.uploaded_by == examiner_id)
+           .first())
+    if doc is None:
+        return fail('Source not found for this examiner and exam', 404)
+    if not 1 <= page_number <= doc.page_count:
+        return fail('Page outside the PDF', 404)
+
+    try:
+        connection, secret = storage_connection()
+        try:
+            path = '/storage/v1/object/authenticated/exam-source-pdfs/' + doc.storage_key
+            connection.request('GET', path, headers={'apikey': secret})
+            response = connection.getresponse()
+            if response.status != 200:
+                return fail('Could not download the selected PDF', 502)
+            contents = response.read(PDF_BYTE_LIMIT + 1)
+        finally:
+            connection.close()
+    except (OSError, RuntimeError, HTTPException, ValueError):
+        return fail('Private storage is unavailable', 502)
+    if len(contents) > PDF_BYTE_LIMIT or hashlib.sha256(contents).hexdigest() != doc.sha256:
+        return fail('Stored PDF does not match the uploaded source', 502)
+    try:
+        reader = PdfReader(BytesIO(contents))
+        text = (reader.pages[page_number - 1].extract_text() or '').strip()
+    except Exception:
+        return fail('Could not extract text from this PDF page', 422)
+
+    result = jsonify(source_id=doc.id, page=page_number, text=text)
+    result.cache_control.no_store = True
+    return result
